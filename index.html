@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Google Sheets Connected Website</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 40px;
+      background: #f8f9fa;
+      color: #212529;
+    }
+    h1 {
+      color: #007bff;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      background: white;
+    }
+    th, td {
+      border: 1px solid #dee2e6;
+      padding: 8px 12px;
+      text-align: left;
+    }
+    th {
+      background-color: #e9ecef;
+    }
+  </style>
+</head>
+<body>
+  <h1>Live Google Sheets Data</h1>
+  <div id="sheet-data">Loading data from Google Sheets...</div>
+
+  <script>
+  async function loadGoogleSheetData() {
+    const sheetUrl = "https://docs.google.com/spreadsheets/d/15d-e7-S8A5p_uhAcHMaU2dCZc-csmZ7GJK9sd0iay8U/gviz/tq?tqx=out:csv";
+    try {
+      const response = await fetch(sheetUrl);
+      const text = await response.text();
+      const rows = text.split("\n").map(r => r.split(","));
+
+      const container = document.getElementById("sheet-data");
+      container.innerHTML = `
+        <table>
+          ${rows.map((r, i) => `
+            <tr>${r.map((c, j) => i === 0 ? `<th>${c}</th>` : `<td>${c}</td>`).join("")}</tr>`
+          ).join("")}
+        </table>
+      `;
+    } catch (error) {
+      document.getElementById("sheet-data").innerText = "Error loading data.";
+      console.error(error);
+    }
+  }
+
+  loadGoogleSheetData();
+  setInterval(loadGoogleSheetData, 5 * 60 * 1000); // refresh every 5 minutes
+  </script>
+</body>
+</html>
