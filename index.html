@@ -23,50 +23,60 @@
   <footer class="text-gray-500 text-sm mt-10">
     Auto-updates every 5 minutes • Powered by Google Sheets
   </footer>
+  
+<script>
+  async function loadGoogleSheetData() {
+    const sheetUrl =
+      "https://docs.google.com/spreadsheets/d/15d-e7-S8A5p_uhAcHMaU2dCZc-csmZ7GJK9sd0iay8U/gviz/tq?tqx=out:csv";
+    try {
+      const response = await fetch(sheetUrl);
+      const text = await response.text();
+      
+      const rows = text
+        .split("\n")
+        .map(r => 
+          r.split(",").map(c => 
+            c.trim().replace(/^\"|\"$/g, "") // remove quotes
+          )
+        )
+        .filter(r => r.some(c => c.trim() !== "")); // remove empty rows
 
-  <script>
-    async function loadGoogleSheetData() {
-      const sheetUrl =
-        "https://docs.google.com/spreadsheets/d/15d-e7-S8A5p_uhAcHMaU2dCZc-csmZ7GJK9sd0iay8U/gviz/tq?tqx=out:csv";
-      try {
-        const response = await fetch(sheetUrl);
-        const text = await response.text();
-        const rows = text.split("\n").map(r => r.split(","));
+      const container = document.getElementById("sheet-data");
+      container.classList.remove("italic", "text-gray-500");
 
-        const container = document.getElementById("sheet-data");
-        container.classList.remove("italic", "text-gray-500");
-        container.innerHTML = `
-          <div class='overflow-x-auto'>
-            <table class='min-w-full border border-gray-200 rounded-lg text-sm'>
-              <thead class='bg-blue-600 text-white'>
-                ${rows[0]
-                  .map(header => `<th class='py-3 px-4 text-left font-semibold border-b border-blue-700'>${header}</th>`)
-                  .join("")}
-              </thead>
-              <tbody>
-                ${rows
-                  .slice(1)
-                  .map((r, i) => `
-                    <tr class='${i % 2 === 0 ? "bg-gray-50" : "bg-white"} hover:bg-blue-50 transition'>
-                      ${r
-                        .map(c => `<td class='py-2 px-4 border-b border-gray-200 text-gray-800'>${c}</td>`)
-                        .join("")}
-                    </tr>
-                  `)
-                  .join("")}
-              </tbody>
-            </table>
-          </div>
-        `;
-      } catch (error) {
-        document.getElementById("sheet-data").innerText =
-          "⚠️ Error loading data from Google Sheets.";
-        console.error(error);
-      }
+      container.innerHTML = `
+        <div class='overflow-x-auto'>
+          <table class='min-w-full border border-gray-200 rounded-lg text-sm'>
+            <thead class='bg-blue-600 text-white'>
+              ${rows[0]
+                .map(header => `<th class='py-3 px-4 text-left font-semibold border-b border-blue-700'>${header}</th>`)
+                .join("")}
+            </thead>
+            <tbody>
+              ${rows
+                .slice(1)
+                .map((r, i) => `
+                  <tr class='${i % 2 === 0 ? "bg-gray-50" : "bg-white"} hover:bg-blue-50 transition'>
+                    ${r
+                      .map(c => `<td class='py-2 px-4 border-b border-gray-200 text-gray-800'>${c}</td>`)
+                      .join("")}
+                  </tr>
+                `)
+                .join("")}
+            </tbody>
+          </table>
+        </div>
+      `;
+    } catch (error) {
+      document.getElementById("sheet-data").innerText =
+        "⚠️ Error loading data from Google Sheets.";
+      console.error(error);
     }
+  }
 
-    loadGoogleSheetData();
-    setInterval(loadGoogleSheetData, 5 * 60 * 1000);
-  </script>
+  loadGoogleSheetData();
+  setInterval(loadGoogleSheetData, 5 * 60 * 1000);
+</script>
+
 </body>
 </html>
