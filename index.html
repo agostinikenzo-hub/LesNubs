@@ -1,62 +1,113 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Google Sheets Connected Website</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Les Nubs — Live Data</title>
   <style>
     body {
-      font-family: Arial, sans-serif;
-      margin: 40px;
-      background: #f8f9fa;
-      color: #212529;
+      font-family: "Inter", Arial, sans-serif;
+      background: #f2f4f7;
+      color: #222;
+      margin: 0;
+      padding: 40px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
     }
+
     h1 {
-      color: #007bff;
+      color: #1a73e8;
+      margin-bottom: 30px;
+      font-size: 2rem;
+      text-align: center;
     }
-    table {
-      border-collapse: collapse;
-      width: 100%;
+
+    #sheet-data {
       background: white;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+      width: 95%;
+      max-width: 900px;
+      overflow-x: auto;
     }
-    th, td {
-      border: 1px solid #dee2e6;
-      padding: 8px 12px;
-      text-align: left;
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.95rem;
     }
+
     th {
-      background-color: #e9ecef;
+      background: #1a73e8;
+      color: white;
+      padding: 10px;
+      text-align: left;
+      font-weight: 600;
+    }
+
+    td {
+      border-bottom: 1px solid #e0e0e0;
+      padding: 10px;
+    }
+
+    tr:hover {
+      background: #f8f9fa;
+    }
+
+    .loading {
+      text-align: center;
+      font-style: italic;
+      color: #777;
+    }
+
+    footer {
+      margin-top: 40px;
+      color: #888;
+      font-size: 0.85rem;
     }
   </style>
 </head>
 <body>
-  <h1>Live Google Sheets Data</h1>
-  <div id="sheet-data">Loading data from Google Sheets...</div>
+  <h1>Les Nubs — Live Google Sheet Data</h1>
+
+  <div id="sheet-data" class="loading">Loading data from Google Sheets...</div>
+
+  <footer>Auto-updates every 5 minutes • Powered by Google Sheets</footer>
 
   <script>
-  async function loadGoogleSheetData() {
-    const sheetUrl = "https://docs.google.com/spreadsheets/d/15d-e7-S8A5p_uhAcHMaU2dCZc-csmZ7GJK9sd0iay8U/gviz/tq?tqx=out:csv";
-    try {
-      const response = await fetch(sheetUrl);
-      const text = await response.text();
-      const rows = text.split("\n").map(r => r.split(","));
+    async function loadGoogleSheetData() {
+      const sheetUrl =
+        "https://docs.google.com/spreadsheets/d/15d-e7-S8A5p_uhAcHMaU2dCZc-csmZ7GJK9sd0iay8U/gviz/tq?tqx=out:csv";
+      try {
+        const response = await fetch(sheetUrl);
+        const text = await response.text();
+        const rows = text.split("\n").map(r => r.split(","));
 
-      const container = document.getElementById("sheet-data");
-      container.innerHTML = `
-        <table>
-          ${rows.map((r, i) => `
-            <tr>${r.map((c, j) => i === 0 ? `<th>${c}</th>` : `<td>${c}</td>`).join("")}</tr>`
-          ).join("")}
-        </table>
-      `;
-    } catch (error) {
-      document.getElementById("sheet-data").innerText = "Error loading data.";
-      console.error(error);
+        const container = document.getElementById("sheet-data");
+        container.classList.remove("loading");
+
+        container.innerHTML = `
+          <table>
+            ${rows
+              .map((r, i) => `
+                <tr>
+                  ${r.map(c => (i === 0 ? `<th>${c}</th>` : `<td>${c}</td>`)).join("")}
+                </tr>
+              `)
+              .join("")}
+          </table>
+        `;
+      } catch (error) {
+        document.getElementById("sheet-data").innerText =
+          "⚠️ Error loading data from Google Sheets.";
+        console.error(error);
+      }
     }
-  }
 
-  loadGoogleSheetData();
-  setInterval(loadGoogleSheetData, 5 * 60 * 1000); // refresh every 5 minutes
+    loadGoogleSheetData();
+    setInterval(loadGoogleSheetData, 5 * 60 * 1000);
   </script>
 </body>
 </html>
