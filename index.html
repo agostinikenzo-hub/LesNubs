@@ -38,7 +38,7 @@
     Data auto-updates from Google Sheets.  
   </footer>
 
-  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <script>
 async function loadGoogleSheetData() {
   const sheetUrl =
@@ -54,7 +54,7 @@ async function loadGoogleSheetData() {
     const rows = parsed.data.filter(r => r.some(c => c.trim() !== ""));
     const clean = v => String(v || "").replace(/^"|"$/g, "").replace(/""/g, '"').trim();
 
-    // Identify sections
+    // --- Identify each section (Season / Splits) ---
     const firstRow = rows[0];
     const splitIndices = [];
     firstRow.forEach((cell, i) => {
@@ -68,7 +68,7 @@ async function loadGoogleSheetData() {
       end: splitIndices[idx + 1] || firstRow.length
     }));
 
-    // Parse data for each section
+    // --- Parse section content ---
     const sectionData = sections.map(sec => {
       const block = rows.map(r => r.slice(sec.start, sec.end));
       const groups = [];
@@ -95,30 +95,44 @@ async function loadGoogleSheetData() {
       return { ...sec, groups };
     });
 
-    // ✅ Compute summary from last Split (KDA King, OP.GG, Avg)
-    const lastSplit = sectionData[sectionData.length - 1];
-    let playerStats = [];
-    for (const g of lastSplit.groups) {
-      const playerCol = g.header.findIndex(h => /Player/i.test(h));
-      const kdaCol = g.header.findIndex(h => /KDA/i.test(h));
-      const opggCol = g.header.findIndex(h => /OP\.GG/i.test(h));
+    // ✅ Find the last split with actual player rows
+    const lastSplit = [...sectionData].reverse().find(sec => {
+      return sec.groups.some(g => g.rows.some(r => /JANSEN|SWEENEY|BENZ|OTA|ACHTEN|HH/i.test(r.join(" "))));
+    });
 
-      if (playerCol >= 0 && kdaCol >= 0) {
-        for (const r of g.rows) {
-          const player = clean(r[playerCol]);
-          if (!player || /team avg/i.test(player)) continue;
-          const kda = parseFloat((r[kdaCol] || "").replace(",", "."));
-          const opgg = opggCol >= 0 ? parseFloat((r[opggCol] || "").replace(",", ".")) : null;
-          if (!isNaN(kda)) playerStats.push({ player, kda, opgg });
+    console.log("Detected latest split:", lastSplit?.name);
+
+    // ✅ Extract player data
+    let playerStats = [];
+    if (lastSplit) {
+      for (const g of lastSplit.groups) {
+        const playerCol = g.header.findIndex(h => /Player/i.test(h));
+        const kdaCol = g.header.findIndex(h => /KDA KING|KDA/i.test(h));
+        const opggCol = g.header.findIndex(h => /OP\.GG/i.test(h));
+
+        if (playerCol >= 0 && kdaCol >= 0) {
+          console.log(`Parsing group: ${g.title} — Player col ${playerCol}, KDA col ${kdaCol}, OP.GG col ${opggCol}`);
+          for (const r of g.rows) {
+            const player = clean(r[playerCol]);
+            if (!player || /team avg/i.test(player)) continue;
+            const kda = parseFloat((r[kdaCol] || "").replace(",", "."));
+            const opgg = opggCol >= 0 ? parseFloat((r[opggCol] || "").replace(",", ".")) : null;
+            if (!isNaN(kda)) playerStats.push({ player, kda, opgg });
+          }
         }
       }
     }
 
+    console.log("Player stats extracted:", playerStats);
+
+    // ✅ Compute top stats
     const topKDA = playerStats.reduce((a, b) => (b.kda > a.kda ? b : a), { kda: -Infinity });
     const topOPGG = playerStats.reduce((a, b) => (b.opgg > a.opgg ? b : a), { opgg: -Infinity });
-    const avgKDA = (playerStats.reduce((s, p) => s + p.kda, 0) / playerStats.length).toFixed(2);
+    const avgKDA = playerStats.length
+      ? (playerStats.reduce((s, p) => s + p.kda, 0) / playerStats.length).toFixed(2)
+      : "N/A";
 
-    // Render summary cards above tabs
+    // ✅ Render summary cards
     const summaryHTML = `
       <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 text-center">
         <div class="bg-orange-100 text-orange-700 rounded-xl p-4 shadow">
@@ -137,7 +151,7 @@ async function loadGoogleSheetData() {
     `;
     tabs.insertAdjacentHTML("beforebegin", summaryHTML);
 
-    // Create tabs
+    // --- Tabs rendering (unchanged) ---
     tabs.innerHTML = sections
       .map((s, i) => `
         <button id="tab-${i}" data-idx="${i}" 
@@ -146,7 +160,7 @@ async function loadGoogleSheetData() {
         </button>`)
       .join("");
 
-    // Render sections
+    // --- Section rendering (unchanged) ---
     container.innerHTML = sectionData
       .map(
         (sec, i) => `
@@ -187,7 +201,7 @@ async function loadGoogleSheetData() {
       )
       .join("");
 
-    // Tab switching logic
+    // --- Tab switching logic ---
     const allTabs = document.querySelectorAll(".tab-btn");
     const allSections = document.querySelectorAll(".section");
     allTabs.forEach(tab => {
@@ -200,12 +214,12 @@ async function loadGoogleSheetData() {
       });
     });
 
-    // Default visible tab
+    // Default show first tab
     document.getElementById("tab-0").classList.add("active-tab");
     document.getElementById("section-0").classList.remove("hidden");
     status.textContent = "Loaded successfully ✔";
   } catch (err) {
-    console.error(err);
+    console.error("Error loading sheet:", err);
     status.textContent = "⚠️ Error loading data. Check your Google Sheet permissions.";
   }
 }
