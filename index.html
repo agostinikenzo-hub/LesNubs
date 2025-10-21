@@ -26,189 +26,99 @@
   </footer>
 
 <script>
-/* Robust CSV parser (handles quoted fields and "" escapes) */
-function parseCSV(text) {
-  const rows = [];
-  let row = [];
-  let field = "";
-  let inQuotes = false;
+async function loadGoogleSheetData() {
+  const sheetUrl = "https://docs.google.com/spreadsheets/d/15d-e7-S8A5p_uhAcHMaU2dCZc-csmZ7GJK9sd0iay8U/gviz/tq?tqx=out:csv";
+  const container = document.getElementById("sheet-data");
+  container.innerHTML = '<div class="text-gray-500 italic p-6">Loading data…</div>';
 
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (i + 1 < text.length && text[i+1] === '"') { field += '"'; i++; }
-        else { inQuotes = false; }
-      } else { field += ch; }
-    } else {
-      if (ch === '"') { inQuotes = true; }
-      else if (ch === ',') { row.push(field); field = ""; }
-      else if (ch === '\r') { continue; }
-      else if (ch === '\n') { row.push(field); rows.push(row); row = []; field = ""; }
-      else { field += ch; }
-    }
+  try {
+    const res = await fetch(sheetUrl);
+    const text = await res.text();
+
+    // simple CSV parse
+    const rows = text.split(/\r?\n/).map(r => r.split(',')).filter(r => r.some(c => c.trim() !== ""));
+    const headers = rows[0];
+    const dataRows = rows.slice(1);
+
+    // --- grouping logic ---
+    // Find split headers (those that contain "SPLIT" or similar)
+    const splitIndices = headers
+      .map((h, i) => (h.toUpperCase().includes("SPLIT") ? { name: h.trim(), index: i } : null))
+      .filter(Boolean);
+
+    // create fake "season" group that contains all
+    const seasonName = "Season Tracking";
+
+    // build a structure like { splitName: { columns: [...], rows: [...] } }
+    const splits = {};
+    splitIndices.forEach(({ name }) => (splits[name] = []));
+
+    // separate columns roughly per split group (every split block next to each other)
+    // We'll use the indexes of those split headers to define column ranges
+    const ranges = splitIndices.map((s, idx) => {
+      const start = s.index;
+      const end = splitIndices[idx + 1] ? splitIndices[idx + 1].index : headers.length;
+      return { name: s.name, start, end };
+    });
+
+    // now create subtable per range
+    const subTables = ranges.map(({ name, start, end }) => {
+      const subHeaders = headers.slice(start, end);
+      const subRows = dataRows.map(r => r.slice(start, end));
+      return { name, subHeaders, subRows };
+    });
+
+    // --- Render ---
+    container.innerHTML = `
+      <div class="bg-white shadow-xl rounded-2xl p-6 border border-gray-200 max-w-6xl mx-auto">
+        <h2 class="text-2xl font-bold text-blue-700 mb-4 text-center">${seasonName}</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          ${subTables
+            .map(
+              (sub) => `
+              <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 overflow-x-auto">
+                <h3 class="text-lg font-semibold text-blue-700 mb-2 text-center">${sub.name}</h3>
+                <table class="min-w-full text-sm">
+                  <thead class="bg-blue-600 text-white">
+                    <tr>
+                      ${sub.subHeaders
+                        .map((h) => `<th class="px-3 py-1 text-left font-medium">${escapeHtml(h)}</th>`)
+                        .join("")}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${sub.subRows
+                      .map(
+                        (r, i) => `
+                        <tr class="${i % 2 === 0 ? "bg-white" : "bg-blue-100"}">
+                          ${r.map(
+                            (cell) => `<td class="px-3 py-1 border-b border-blue-200">${escapeHtml(cell)}</td>`
+                          ).join("")}
+                        </tr>`
+                      )
+                      .join("")}
+                  </tbody>
+                </table>
+              </div>`
+            )
+            .join("")}
+        </div>
+      </div>`;
+  } catch (err) {
+    console.error(err);
+    container.innerHTML = '<div class="text-red-600 p-6">⚠️ Error loading data.</div>';
   }
-  if (field !== "" || row.length > 0) { row.push(field); rows.push(row); }
-  return rows;
 }
 
 function escapeHtml(str) {
-  if (str == null) return "";
-  return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  return String(str || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
-/* --- CONFIG --- */
-const sheetUrl = "https://docs.google.com/spreadsheets/d/15d-e7-S8A5p_uhAcHMaU2dCZc-csmZ7GJK9sd0iay8U/gviz/tq?tqx=out:csv";
-const markerLetters = ['F','K','T']; // which columns should start new cards (change if you like)
-const markerIndices = markerLetters.map(l => l.toUpperCase().charCodeAt(0) - 65); // A=0
-
-async function loadSheetWithDiagnostics() {
-  const statusEl = document.getElementById('status');
-  const dataEl = document.getElementById('sheet-data');
-  const debugEl = document.getElementById('debug');
-
-  function setStatus(txt) { statusEl.innerText = txt; console.log("[status]", txt); }
-  function appendDebug(txt) { debugEl.innerHTML += escapeHtml(txt) + "<br/>"; console.log("[debug]", txt); }
-
-  try {
-    setStatus("Fetching sheet URL...");
-    appendDebug("Fetching: " + sheetUrl);
-
-    const res = await fetch(sheetUrl, { mode: 'cors' });
-    appendDebug("Fetch returned: status=" + res.status + " " + res.statusText);
-    if (!res.ok) {
-      const bodyText = await res.text().catch(()=>"<unreadable body>");
-      setStatus("Fetch failed: HTTP " + res.status);
-      dataEl.innerHTML = '<div class="text-red-600 p-4">⚠️ Fetch failed — see debug below and browser console. HTTP ' + res.status + '</div>';
-      appendDebug("Response body (first 1000 chars): " + bodyText.slice(0,1000));
-      return;
-    }
-
-    setStatus("Reading response text...");
-    const text = await res.text();
-    appendDebug("Response length: " + text.length + " chars.");
-    if (text.length < 10) {
-      appendDebug("Response seems very short — maybe sheet not published. Response preview: " + escapeHtml(text.slice(0,500)));
-    }
-
-    setStatus("Parsing CSV...");
-    const raw = parseCSV(text);
-    appendDebug("Parsed rows (including empty rows): " + raw.length);
-
-    // drop fully-empty rows
-    const rows = raw.filter(r => r.some(c => String(c).trim() !== ""));
-    appendDebug("Rows after removing empty rows: " + rows.length);
-
-    if (rows.length === 0) {
-      setStatus("No data found in sheet.");
-      dataEl.innerHTML = '<div class="text-gray-600 p-4">No data rows found after parsing.</div>';
-      return;
-    }
-
-    const headers = rows[0].map(h => String(h).trim());
-    const dataRows = rows.slice(1);
-    appendDebug("Header columns: " + headers.length + " — " + headers.join(" | "));
-
-    // build sections (marker logic like before)
-    const sections = [];
-    let currentSection = null;
-
-    for (const row of dataRows) {
-      // check markers left-to-right, create new section per non-empty marker cell
-      for (const mi of markerIndices) {
-        const val = (row[mi] ?? "").toString().trim();
-        if (val !== "") {
-          // new section with marker cell text as title
-          currentSection = { title: val, rows: [] };
-          sections.push(currentSection);
-          appendDebug("Created section '" + val + "' (marker col index " + mi + ")");
-        }
-      }
-      if (!currentSection) {
-        currentSection = { title: "General", rows: [] };
-        sections.push(currentSection);
-        appendDebug("Created default 'General' section");
-      }
-      currentSection.rows.push(row);
-    }
-
-    appendDebug("Total sections created: " + sections.length + " (titles: " + sections.map(s=>s.title).join(", ") + ")");
-    setStatus("Rendering " + sections.length + " sections...");
-
-    // remove markers from visible columns
-    const displayCols = headers.map((h, idx) => ({ idx, name: h }))
-                                .filter(col => !markerIndices.includes(col.idx));
-
-    // render simple cards (or if only one section, render a table)
-    // We'll render cards if sections>1 else show a single full-width table for simplicity
-    if (sections.length <= 1) {
-      // build single table with all rows
-      dataEl.innerHTML = buildSingleTable(headers, sections[0].rows);
-    } else {
-      dataEl.innerHTML = buildCardsHtml(sections, displayCols);
-    }
-
-    setStatus("Loaded. Open console for debug logs.");
-    appendDebug("Render complete. headersCount=" + headers.length + " totalRows=" + dataRows.length);
-
-  } catch (err) {
-    console.error(err);
-    setStatus("Error during fetch/parse.");
-    dataEl.innerHTML = '<div class="text-red-600 p-4">⚠️ Error: ' + escapeHtml(String(err.message || err)) + '</div>';
-    appendDebug("Exception: " + (err && err.stack ? err.stack : String(err)));
-  }
-}
-
-/* helpers to build HTML output */
-function buildSingleTable(headers, rows) {
-  return `
-    <div class="overflow-x-auto">
-      <table class="min-w-full table-auto border-collapse">
-        <thead class="bg-blue-600 text-white">
-          <tr>
-            ${headers.map(h => `<th class="px-4 py-3 text-left font-medium border-b border-blue-700">${escapeHtml(h)}</th>`).join("")}
-          </tr>
-        </thead>
-        <tbody class="bg-white">
-          ${rows.map((r, i) => `
-            <tr class="${i%2===0 ? 'bg-gray-50' : ''} hover:bg-blue-50">
-              ${headers.map((_, ci) => `<td class="px-4 py-2 align-top border-b border-gray-100 break-words max-w-[20rem]">${escapeHtml(r[ci] ?? '')}</td>`).join("")}
-            </tr>`).join("")}
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
-function buildCardsHtml(sections, displayCols) {
-  return `
-    <div class="grid gap-6 grid-cols-1 md:grid-cols-1 lg:grid-cols-2 xl:grid-cols-3">
-      ${sections.map(sec => `
-        <section class="w-full min-w-0 bg-white shadow-lg rounded-xl p-6 border border-gray-200 flex flex-col">
-          <h2 class="text-lg font-semibold text-blue-700 mb-3">${escapeHtml(sec.title)}</h2>
-          <div class="overflow-x-auto">
-            <table class="table-auto min-w-full text-sm">
-              <thead class="bg-blue-600 text-white">
-                <tr>
-                  ${displayCols.map(dc => `<th class="px-3 py-2 text-left font-medium border-b border-blue-700">${escapeHtml(dc.name)}</th>`).join("")}
-                </tr>
-              </thead>
-              <tbody>
-                ${sec.rows.map((r, i) => `
-                  <tr class="${i%2===0 ? 'bg-gray-50' : 'bg-white'} hover:bg-blue-50">
-                    ${displayCols.map(dc => `<td class="px-3 py-2 border-b border-gray-100 break-words max-w-[18rem]">${escapeHtml(r[dc.idx] ?? '')}</td>`).join("")}
-                  </tr>`).join("")}
-              </tbody>
-            </table>
-          </div>
-        </section>`).join("")}
-    </div>
-  `;
-}
-
-/* initial load + refresh */
-loadSheetWithDiagnostics();
-setInterval(loadSheetWithDiagnostics, 5 * 60 * 1000);
+loadGoogleSheetData();
 </script>
 </body>
 </html>
