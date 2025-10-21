@@ -1,23 +1,26 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Les Nubs — Card Dashboard</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Les Nubs — Card Dashboard (fixed sizing)</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    /* Prevent the whole page from scrolling horizontally */
-    body { overflow-x: hidden; }
-  </style>
+  <style>body { overflow-x: hidden; }</style>
 </head>
 <body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen flex flex-col items-center p-6">
 
   <header class="text-center my-8">
     <h1 class="text-4xl font-bold text-blue-700 mb-2">Les Nubs</h1>
-    <p class="text-gray-600 text-lg">Live Google Sheets Data — Card Layout</p>
+    <p class="text-gray-600 text-lg">Live Google Sheets Data — Cards per section</p>
   </header>
 
-  <main class="w-full max-w-6xl">
+  <!-- ======= CHANGE THESE 3 LINES TO CONTROL SIZING =======
+       1) main max width: max-w-6xl / max-w-7xl / max-w-none
+       2) grid columns: adjust how many cards per row at breakpoints
+          e.g. grid-cols-1 md:grid-cols-1 lg:grid-cols-2 xl:grid-cols-3
+       3) card padding/size: change p-6 to p-8 or adjust class w-full / max-w-xx
+  ========================================================= -->
+  <main class="w-full max-w-7xl mx-auto"> 
     <div id="sheet-data" class="text-center text-gray-500 italic">Loading data from Google Sheets...</div>
   </main>
 
@@ -25,53 +28,29 @@
     Auto-updates every 5 minutes • Powered by Google Sheets
   </footer>
 
-  <script>
-/* Robust CSV parser: handles quoted fields, escaped quotes ("") and CR/LF */
+<script>
+/* Robust CSV parser (handles quoted fields and "" escapes) */
 function parseCSV(text) {
-  const rows = [];
-  let row = [];
-  let field = "";
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-
+  const rows=[];
+  let row=[];
+  let field="";
+  let inQuotes=false;
+  for (let i=0;i<text.length;i++){
+    const ch=text[i];
     if (inQuotes) {
       if (ch === '"') {
-        // If next char is also a quote, consume it and add a quote to the field
-        if (i + 1 < text.length && text[i + 1] === '"') {
-          field += '"';
-          i++;
-        } else {
-          // end of quoted field
-          inQuotes = false;
-        }
-      } else {
-        field += ch;
-      }
+        if (i+1 < text.length && text[i+1] === '"') { field += '"'; i++; }
+        else { inQuotes = false; }
+      } else { field += ch; }
     } else {
-      if (ch === '"') {
-        inQuotes = true;
-      } else if (ch === ',') {
-        row.push(field);
-        field = "";
-      } else if (ch === '\r') {
-        // ignore CR, handle LF below
-        continue;
-      } else if (ch === '\n') {
-        row.push(field);
-        rows.push(row);
-        row = [];
-        field = "";
-      } else {
-        field += ch;
-      }
+      if (ch === '"') { inQuotes = true; }
+      else if (ch === ',') { row.push(field); field=""; }
+      else if (ch === '\r') { continue; }
+      else if (ch === '\n') { row.push(field); rows.push(row); row=[]; field=""; }
+      else { field += ch; }
     }
   }
-  // push last field/row if any
-  if (field !== "" || row.length > 0) {
-    row.push(field);
-    rows.push(row);
-  }
+  if (field !== "" || row.length > 0) { row.push(field); rows.push(row); }
   return rows;
 }
 
@@ -81,10 +60,8 @@ async function loadGoogleSheetData() {
     const res = await fetch(sheetUrl);
     const text = await res.text();
 
-    // parse CSV properly
+    // Parse csv and drop fully empty rows
     const raw = parseCSV(text);
-
-    // remove completely empty rows
     const rows = raw.filter(r => r.some(c => String(c).trim() !== ""));
 
     if (rows.length === 0) {
@@ -95,36 +72,45 @@ async function loadGoogleSheetData() {
     const headers = rows[0].map(h => String(h).trim());
     const dataRows = rows.slice(1);
 
-    // Group by first column (section). If section cell is empty -> "General"
+    // GROUPING: group by first column (column A). If blank -> 'General'
     const grouped = {};
     for (const row of dataRows) {
-      const sectionKey = (row[0] && String(row[0]).trim()) ? String(row[0]).trim() : "General";
-      if (!grouped[sectionKey]) grouped[sectionKey] = [];
-      // store the rest of columns (so table columns = headers.slice(1))
-      grouped[sectionKey].push(row.slice(1));
+      const key = (row[0] && String(row[0]).trim()) ? String(row[0]).trim() : "General";
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(row.slice(1)); // store columns after the section label
     }
 
-    const container = document.getElementById("sheet-data");
-    container.classList.remove("italic", "text-gray-500");
+    // Debug: log group names and counts (open browser console to see)
+    console.log("Groups found:", Object.entries(grouped).map(([k,v]) => [k, v.length]));
 
+    // RENDER: grid of cards. Adjust the grid classes here if you want bigger cards:
+    // e.g. 'grid-cols-1 md:grid-cols-1 lg:grid-cols-2 xl:grid-cols-3'
+    const container = document.getElementById("sheet-data");
+    container.classList.remove("italic","text-gray-500");
     container.innerHTML = `
-      <div class="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+      <div class="grid gap-6 grid-cols-1 md:grid-cols-1 lg:grid-cols-2 xl:grid-cols-3">
         ${Object.entries(grouped).map(([section, rows]) => `
-          <section class="w-full bg-white shadow-lg rounded-xl p-5 border border-gray-200">
+          <section class="w-full min-w-0 bg-white shadow-lg rounded-xl p-6 border border-gray-200 flex flex-col">
             <h2 class="text-lg font-semibold text-blue-700 mb-3">${escapeHtml(section)}</h2>
+
+            <!-- INTERNAL WRAPPER: this scrolls horizontally only inside the card if needed -->
             <div class="overflow-x-auto">
-              <table class="min-w-max w-full text-sm">
+              <!-- Use table-fixed to allow column widths to behave predictably.
+                   Each td is given a small max width and break-words so long cells wrap,
+                   but numbers with commas will remain intact. -->
+              <table class="table-fixed w-full text-sm">
                 <thead class="bg-blue-600 text-white">
                   <tr>
                     ${headers.slice(1).map(h => `<th class="px-3 py-2 text-left font-medium border-b border-blue-700">${escapeHtml(h)}</th>`).join("")}
                   </tr>
                 </thead>
                 <tbody>
-                  ${rows.map((r, i) => `
+                  ${rows.map((r,i) => `
                     <tr class="${i % 2 === 0 ? 'bg-gray-50' : 'bg-white'} hover:bg-blue-50">
-                      ${headers.slice(1).map((_, colIndex) => `<td class="px-3 py-2 border-b border-gray-100">${escapeHtml(r[colIndex] ?? '')}</td>`).join("")}
-                    </tr>
-                  `).join("")}
+                      ${headers.slice(1).map((_, ci) => `
+                        <td class="px-3 py-2 border-b border-gray-100 break-words max-w-[12rem]">${escapeHtml(r[ci] ?? '')}</td>
+                      `).join("")}
+                    </tr>`).join("")}
                 </tbody>
               </table>
             </div>
@@ -132,25 +118,25 @@ async function loadGoogleSheetData() {
         `).join("")}
       </div>
     `;
+
   } catch (err) {
     console.error(err);
     document.getElementById("sheet-data").innerText = "⚠️ Error loading data from Google Sheets.";
   }
 }
 
-/* simple HTML-escape helper */
+/* small escape helper */
 function escapeHtml(str) {
   if (str == null) return "";
   return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/&/g,"&amp;")
+    .replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;");
 }
 
 loadGoogleSheetData();
-setInterval(loadGoogleSheetData, 5 * 60 * 1000);
+setInterval(loadGoogleSheetData, 5*60*1000);
 </script>
-
 </body>
 </html>
