@@ -1,92 +1,108 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Les Nubs — Live Data</title>
-<script src="https://cdn.tailwindcss.com?v=2"></script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Les Nubs — Card Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Prevent the whole page from scrolling horizontally */
+    body { overflow-x: hidden; }
+  </style>
 </head>
-<body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen flex flex-col items-center justify-start p-6">
+<body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen flex flex-col items-center p-6">
 
-  <!-- Header -->
   <header class="text-center my-8">
     <h1 class="text-4xl font-bold text-blue-700 mb-2">Les Nubs</h1>
-    <p class="text-gray-600 text-lg">Live Google Sheets Data</p>
+    <p class="text-gray-600 text-lg">Live Google Sheets Data — Card Layout</p>
   </header>
 
-  <!-- Main content card -->
-  <main class="bg-white shadow-xl rounded-2xl p-6 w-full max-w-5xl">
+  <main class="w-full max-w-6xl">
     <div id="sheet-data" class="text-center text-gray-500 italic">Loading data from Google Sheets...</div>
   </main>
 
-  <!-- Footer -->
   <footer class="text-gray-500 text-sm mt-10">
     Auto-updates every 5 minutes • Powered by Google Sheets
   </footer>
-  
-<script>
-async function loadGoogleSheetData() {
-  const sheetUrl =
-    "https://docs.google.com/spreadsheets/d/15d-e7-S8A5p_uhAcHMaU2dCZc-csmZ7GJK9sd0iay8U/gviz/tq?tqx=out:csv";
-  try {
-    const response = await fetch(sheetUrl);
-    const text = await response.text();
 
-    // Parse + clean CSV
-    const rows = text
-      .split("\n")
-      .map(r => r.split(",").map(c => c.trim().replace(/^\"|\"$/g, "")))
-      .filter(r => r.some(c => c.trim() !== ""));
+  <script>
+  async function loadGoogleSheetData() {
+    const sheetUrl = "https://docs.google.com/spreadsheets/d/15d-e7-S8A5p_uhAcHMaU2dCZc-csmZ7GJK9sd0iay8U/gviz/tq?tqx=out:csv";
+    try {
+      const response = await fetch(sheetUrl);
+      const text = await response.text();
 
-    const headers = rows[0];
-    const data = rows.slice(1);
+      // parse CSV, remove quotes, ignore completely empty rows
+      const rows = text
+        .split("\n")
+        .map(r => r.split(",").map(c => c.trim().replace(/^"|"$/g, "")))
+        .filter(r => r.some(c => c !== ""));
 
-    // Group rows by first column (e.g., "Player Stats", "Team Avg")
-    const grouped = {};
-    for (const row of data) {
-      const section = row[0] || "General";
-      if (!grouped[section]) grouped[section] = [];
-      grouped[section].push(row.slice(1)); // omit section name from each row
-    }
+      if (rows.length === 0) {
+        document.getElementById("sheet-data").innerText = "No data in sheet.";
+        return;
+      }
 
-    // Build HTML
-    const container = document.getElementById("sheet-data");
-    container.classList.remove("italic", "text-gray-500");
+      const headers = rows[0];
+      const dataRows = rows.slice(1);
 
-    container.innerHTML = `
-      <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        ${Object.entries(grouped)
-          .map(([section, rows]) => `
-            <div class="bg-white shadow-lg rounded-xl p-5 border border-gray-200 hover:shadow-xl transition">
-              <h2 class="text-xl font-semibold text-blue-700 mb-3">${section}</h2>
+      // Group by first column (section). If first column is empty use "General"
+      const grouped = {};
+      for (const row of dataRows) {
+        const sectionKey = (row[0] && row[0].trim()) ? row[0].trim() : "General";
+        if (!grouped[sectionKey]) grouped[sectionKey] = [];
+        // store rest of columns (including possibly blanks) so table columns match headers.slice(1)
+        grouped[sectionKey].push(row.slice(1));
+      }
+
+      const container = document.getElementById("sheet-data");
+      container.classList.remove("italic", "text-gray-500");
+
+      // Build the grid of cards. Each card contains an overflow-x-auto wrapper so its table scrolls horizontally if needed.
+      container.innerHTML = `
+        <div class="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+          ${Object.entries(grouped).map(([section, rows]) => `
+            <section class="w-full bg-white shadow-lg rounded-xl p-5 border border-gray-200">
+              <h2 class="text-lg font-semibold text-blue-700 mb-3">${escapeHtml(section)}</h2>
               <div class="overflow-x-auto">
-                <table class="min-w-full text-sm border border-gray-100">
+                <table class="min-w-max w-full text-sm">
                   <thead class="bg-blue-600 text-white">
-                    <tr>${headers.slice(1).map(h => `<th class="px-3 py-2 text-left">${h}</th>`).join("")}</tr>
+                    <tr>
+                      ${headers.slice(1).map(h => `<th class="px-3 py-2 text-left font-medium border-b border-blue-700">${escapeHtml(h)}</th>`).join("")}
+                    </tr>
                   </thead>
                   <tbody>
                     ${rows.map((r, i) => `
-                      <tr class="${i % 2 === 0 ? "bg-gray-50" : "bg-white"} hover:bg-blue-50">
-                        ${r.map(c => `<td class="px-3 py-2 border-b">${c}</td>`).join("")}
-                      </tr>`).join("")}
+                      <tr class="${i % 2 === 0 ? 'bg-gray-50' : 'bg-white'} hover:bg-blue-50">
+                        ${headers.slice(1).map((_, colIndex) => `<td class="px-3 py-2 border-b border-gray-100">${escapeHtml(r[colIndex] ?? '')}</td>`).join("")}
+                      </tr>
+                    `).join("")}
                   </tbody>
                 </table>
               </div>
-            </div>
+            </section>
           `).join("")}
-      </div>
-    `;
-  } catch (error) {
-    document.getElementById("sheet-data").innerText =
-      "⚠️ Error loading data from Google Sheets.";
-    console.error(error);
+        </div>
+      `;
+
+    } catch (err) {
+      console.error(err);
+      document.getElementById("sheet-data").innerText = "⚠️ Error loading data from Google Sheets.";
+    }
   }
-}
 
-loadGoogleSheetData();
-setInterval(loadGoogleSheetData, 5 * 60 * 1000);
-</script>
+  // small helper to avoid injecting raw HTML from the sheet
+  function escapeHtml(str) {
+    if (str == null) return "";
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
 
-
+  loadGoogleSheetData();
+  setInterval(loadGoogleSheetData, 5 * 60 * 1000);
+  </script>
 </body>
 </html>
