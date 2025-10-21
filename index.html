@@ -65,7 +65,7 @@ async function loadGoogleSheetData() {
     const rows = parsed.data.filter(r => r.some(c => c.trim() !== ""));
     const clean = v => String(v || "").replace(/^"|"$/g, "").replace(/""/g, '"').trim();
 
-    // Identify sections
+    // Identify sections (Season / Splits)
     const firstRow = rows[0];
     const splitIndices = [];
     firstRow.forEach((cell, i) => {
@@ -81,21 +81,43 @@ async function loadGoogleSheetData() {
     // Parse section data
     const sectionData = sections.map(sec => {
       const block = rows.map(r => r.slice(sec.start, sec.end));
-      return { ...sec, rows: block };
+      return { ...sec, rows: block.map(r => r.map(clean)) };
     });
 
-    // ---------- Generate Insights (from latest split) ----------
-    const latestSplit = sectionData.find(s => s.name.toUpperCase().includes("SPLIT 3")) || sectionData[sectionData.length - 1];
-    const dataRows = latestSplit.rows.map(r => r.map(clean));
+    // ---------- Calculate Insights ----------
+    const getKDABySplit = splitName => {
+      const split = sectionData.find(s => s.name.toUpperCase().includes(splitName.toUpperCase()));
+      if (!split) return {};
+      const headerRow = split.rows.find(r => r.some(c => c.toUpperCase().includes("PLAYER")));
+      if (!headerRow) return {};
+      const playerIdx = headerRow.findIndex(c => c.toUpperCase().includes("PLAYER"));
+      const kdaIdx = headerRow.findIndex(c => c.toUpperCase().includes("KDA"));
+      const dataRows = split.rows.filter(r => r[playerIdx] && !isNaN(parseFloat(r[kdaIdx]?.replace(",", "."))));
+      const obj = {};
+      dataRows.forEach(r => (obj[r[playerIdx]] = parseFloat(r[kdaIdx].replace(",", "."))));
+      return obj;
+    };
 
-    // Find indexes for key columns
-    const headerRow = dataRows.find(r => r.some(c => c.toUpperCase().includes("PLAYER")));
+    const split1KDA = getKDABySplit("SPLIT 1");
+    const split3KDA = getKDABySplit("SPLIT 3");
+
+    // Find improvement
+    const improvements = [];
+    for (const player in split1KDA) {
+      const start = split1KDA[player];
+      const end = split3KDA[player];
+      if (start && end) improvements.push({ player, change: end - start });
+    }
+    const mostImproved = improvements.sort((a, b) => b.change - a.change)[0] || { player: "N/A", change: 0 };
+
+    // Find Top KDA & OP.GG (from latest split)
+    const latestSplit = sectionData.find(s => s.name.toUpperCase().includes("SPLIT 3")) || sectionData[sectionData.length - 1];
+    const headerRow = latestSplit.rows.find(r => r.some(c => c.toUpperCase().includes("PLAYER")));
     const playerIdx = headerRow ? headerRow.findIndex(c => c.toUpperCase().includes("PLAYER")) : 0;
     const kdaIdx = headerRow ? headerRow.findIndex(c => c.toUpperCase().includes("KDA")) : 1;
     const opggIdx = headerRow ? headerRow.findIndex(c => c.toUpperCase().includes("OP.GG")) : -1;
 
-    // Extract numeric data for players
-    const playerStats = dataRows
+    const playerStats = latestSplit.rows
       .map(r => {
         const player = clean(r[playerIdx]);
         const kda = parseFloat((r[kdaIdx] || "").replace(",", "."));
@@ -104,18 +126,15 @@ async function loadGoogleSheetData() {
       })
       .filter(d => d.player && !isNaN(d.kda));
 
-    // Find top values
     const topKDA = playerStats.reduce((a, b) => (b.kda > a.kda ? b : a), { kda: -Infinity });
     const topOPGG = playerStats.reduce((a, b) => (b.opgg > a.opgg ? b : a), { opgg: -Infinity });
-
-    // Dummy team avg example (can improve later)
     const avgKDA = (playerStats.reduce((sum, p) => sum + p.kda, 0) / playerStats.length).toFixed(2);
 
-    // Insights HTML
+    // ---------- Render Insights ----------
     insights.innerHTML = `
       <div class="bg-orange-100 text-orange-700 rounded-xl p-4 shadow text-center">
         <h3 class="font-bold text-lg">🏆 Top Performer</h3>
-        <p class="text-sm">Highest KDA: <b>${topKDA.player}</b> (${topKDA.kda})</p>
+        <p class="text-sm"><b>${topKDA.player}</b> — Highest KDA (${topKDA.kda})</p>
       </div>
       <div class="bg-green-100 text-green-700 rounded-xl p-4 shadow text-center">
         <h3 class="font-bold text-lg">💥 Highest OP.GG Score</h3>
@@ -126,8 +145,8 @@ async function loadGoogleSheetData() {
         <p class="text-sm">Avg KDA: ${avgKDA}</p>
       </div>
       <div class="bg-yellow-100 text-yellow-700 rounded-xl p-4 shadow text-center">
-        <h3 class="font-bold text-lg">🧠 Most Improved</h3>
-        <p class="text-sm">Coming soon — based on Split 1 → Split 3 trend</p>
+        <h3 class="font-bold text-lg">🔥 Most Improved</h3>
+        <p class="text-sm">${mostImproved.player} (+${mostImproved.change.toFixed(2)} KDA)</p>
       </div>
     `;
 
@@ -183,7 +202,7 @@ async function loadGoogleSheetData() {
       )
       .join("");
 
-    // ---------- Tab Switching with Fade ----------
+    // ---------- Tab Switching ----------
     const allTabs = document.querySelectorAll(".tab-btn");
     const allSections = document.querySelectorAll(".section");
     allTabs.forEach(tab => {
