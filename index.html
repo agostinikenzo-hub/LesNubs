@@ -49,7 +49,7 @@
   </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-<script>
+  <script>
 async function loadGoogleSheetData() {
   const sheetUrl =
     "https://docs.google.com/spreadsheets/d/15d-e7-S8A5p_uhAcHMaU2dCZc-csmZ7GJK9sd0iay8U/gviz/tq?tqx=out:csv";
@@ -65,85 +65,84 @@ async function loadGoogleSheetData() {
     const rows = parsed.data.filter(r => r.some(c => c.trim() !== ""));
     const clean = v => String(v || "").replace(/^"|"$/g, "").replace(/""/g, '"').trim();
 
-    // Identify main sections
+    // Identify sections
     const firstRow = rows[0];
     const splitIndices = [];
     firstRow.forEach((cell, i) => {
       const upper = cell.toUpperCase();
       if (upper.includes("SPLIT") || upper.includes("SEASON")) splitIndices.push(i);
     });
-
     const sections = splitIndices.map((start, idx) => ({
       name: clean(firstRow[start]),
       start,
       end: splitIndices[idx + 1] || firstRow.length
     }));
 
-    // Parse per section
-    const sectionData = sections.map(sec => ({
-      ...sec,
-      rows: rows.map(r => r.slice(sec.start, sec.end).map(clean))
-    }));
+    // Parse section data
+    const sectionData = sections.map(sec => {
+      const block = rows.map(r => r.slice(sec.start, sec.end));
+      return { ...sec, rows: block };
+    });
 
-    // =============== INSIGHTS ===============
-    const latestSplit =
-      sectionData.find(s => s.name.toUpperCase().includes("SPLIT 3")) ||
-      sectionData[sectionData.length - 1];
-    const dataRows = latestSplit.rows;
+    // ---------- Generate Insights (from latest split) ----------
+    const latestSplit = sectionData.find(s => s.name.toUpperCase().includes("SPLIT 3")) || sectionData[sectionData.length - 1];
+    const dataRows = latestSplit.rows.map(r => r.map(clean));
 
-    // Dynamically locate header row (the one containing "PLAYER" text)
-    const headerRowIndex = dataRows.findIndex(r =>
-      r.some(c => c.toUpperCase().includes("PLAYER"))
-    );
-    const headerRow = dataRows[headerRowIndex];
-    if (!headerRow) throw new Error("Header row not found");
+    // Find indexes for key columns
+    const headerRow = dataRows.find(r => r.some(c => c.toUpperCase().includes("PLAYER")));
+    const playerIdx = headerRow ? headerRow.findIndex(c => c.toUpperCase().includes("PLAYER")) : 0;
+    const kdaIdx = headerRow ? headerRow.findIndex(c => c.toUpperCase().includes("KDA")) : 1;
+    const opggIdx = headerRow ? headerRow.findIndex(c => c.toUpperCase().includes("OP.GG")) : -1;
 
-    const playerIdx = headerRow.findIndex(c => c.toUpperCase().includes("PLAYER"));
-    const kdaIdx = headerRow.findIndex(c => c.toUpperCase().includes("KDA"));
-    const opggIdx = headerRow.findIndex(c => c.toUpperCase().includes("OP.GG"));
+    // Extract numeric data for players
+    const playerStats = dataRows
+      .map(r => {
+        const player = clean(r[playerIdx]);
+        const kda = parseFloat((r[kdaIdx] || "").replace(",", "."));
+        const opgg = parseFloat((r[opggIdx] || "").replace(",", "."));
+        return { player, kda, opgg };
+      })
+      .filter(d => d.player && !isNaN(d.kda));
 
-    // Filter for actual player rows (exclude team avg etc.)
-    const playerData = dataRows
-      .slice(headerRowIndex + 1)
-      .filter(r => r[playerIdx] && !r[playerIdx].toUpperCase().includes("TEAM"))
-      .map(r => ({
-        player: clean(r[playerIdx]),
-        kda: parseFloat((r[kdaIdx] || "0").replace(",", ".")),
-        opgg: parseFloat((r[opggIdx] || "0").replace(",", "."))
-      }))
-      .filter(p => !isNaN(p.kda));
+    // Find top values
+    const topKDA = playerStats.reduce((a, b) => (b.kda > a.kda ? b : a), { kda: -Infinity });
+    const topOPGG = playerStats.reduce((a, b) => (b.opgg > a.opgg ? b : a), { opgg: -Infinity });
 
-    const topKDA = playerData.reduce((a, b) => (b.kda > a.kda ? b : a), { kda: -Infinity });
-    const topOPGG = playerData.reduce((a, b) => (b.opgg > a.opgg ? b : a), { opgg: -Infinity });
-    const avgKDA = (playerData.reduce((s, p) => s + p.kda, 0) / playerData.length).toFixed(2);
+    // Dummy team avg example (can improve later)
+    const avgKDA = (playerStats.reduce((sum, p) => sum + p.kda, 0) / playerStats.length).toFixed(2);
 
-    // Render summary cards
+    // Insights HTML
     insights.innerHTML = `
       <div class="bg-orange-100 text-orange-700 rounded-xl p-4 shadow text-center">
         <h3 class="font-bold text-lg">🏆 Top Performer</h3>
-        <p class="text-sm"><b>${topKDA.player}</b> — KDA ${topKDA.kda.toFixed(2)}</p>
+        <p class="text-sm">Highest KDA: <b>${topKDA.player}</b> (${topKDA.kda})</p>
       </div>
       <div class="bg-green-100 text-green-700 rounded-xl p-4 shadow text-center">
-        <h3 class="font-bold text-lg">💥 Highest OP.GG</h3>
+        <h3 class="font-bold text-lg">💥 Highest OP.GG Score</h3>
         <p class="text-sm">${topOPGG.player || "N/A"} — ${topOPGG.opgg || "N/A"}</p>
       </div>
       <div class="bg-indigo-100 text-indigo-700 rounded-xl p-4 shadow text-center">
         <h3 class="font-bold text-lg">📈 Team Average</h3>
         <p class="text-sm">Avg KDA: ${avgKDA}</p>
       </div>
+      <div class="bg-yellow-100 text-yellow-700 rounded-xl p-4 shadow text-center">
+        <h3 class="font-bold text-lg">🧠 Most Improved</h3>
+        <p class="text-sm">Coming soon — based on Split 1 → Split 3 trend</p>
+      </div>
     `;
 
-    // =============== TABLES ===============
+    // ---------- Create Tabs ----------
     tabs.innerHTML = sections
       .map(
         (s, i) => `
-        <button id="tab-${i}" data-idx="${i}"
+        <button id="tab-${i}" data-idx="${i}" 
           class="tab-btn px-4 py-2 rounded-md bg-gray-100 text-gray-700 font-medium">
           ${s.name}
         </button>`
       )
       .join("");
 
+    // ---------- Render Tables ----------
     container.innerHTML += sectionData
       .map(
         (sec, i) => `
@@ -156,25 +155,24 @@ async function loadGoogleSheetData() {
                   ${sec.rows
                     .map(
                       (r, ri) => `
-                      <tr class="${ri % 2 === 0 ? "bg-white" : "bg-gray-50"}">
-                        ${r
-                          .map((c, ci) => {
-                            const content = clean(c);
-                            const lower = clean(sec.rows[0][ci] || "").toLowerCase();
-                            let style = "px-3 py-1 border-b border-gray-200";
-                            if (lower.includes("op.gg")) {
-                              const num = parseFloat(content.replace(",", "."));
-                              const color =
-                                num >= 7 ? "text-green-600 font-bold" :
-                                num < 5 ? "text-red-500" : "text-gray-700";
-                              style += ` text-right ${color}`;
-                            } else if (!isNaN(parseFloat(content.replace(",", ".")))) {
-                              style += " text-right";
-                            }
-                            return `<td class="${style}">${content}</td>`;
-                          })
-                          .join("")}
-                      </tr>`
+                    <tr class="${ri % 2 === 0 ? "bg-white" : "bg-gray-50"}">
+                      ${r
+                        .map((c, ci) => {
+                          const content = clean(c);
+                          const lower = clean(sec.rows[0][ci] || "").toLowerCase();
+                          let style = "px-3 py-1 border-b border-gray-200";
+                          if (lower.includes("op.gg")) {
+                            const num = parseFloat(content.replace(",", "."));
+                            const color =
+                              num >= 7 ? "text-green-600 font-bold" : num < 5 ? "text-red-500" : "text-gray-700";
+                            style += ` text-right ${color}`;
+                          } else if (!isNaN(parseFloat(content.replace(",", ".")))) {
+                            style += " text-right";
+                          }
+                          return `<td class="${style}">${content}</td>`;
+                        })
+                        .join("")}
+                    </tr>`
                     )
                     .join("")}
                 </tbody>
@@ -185,7 +183,7 @@ async function loadGoogleSheetData() {
       )
       .join("");
 
-    // Tab switching with fade
+    // ---------- Tab Switching with Fade ----------
     const allTabs = document.querySelectorAll(".tab-btn");
     const allSections = document.querySelectorAll(".section");
     allTabs.forEach(tab => {
@@ -203,6 +201,7 @@ async function loadGoogleSheetData() {
       });
     });
 
+    // Default view
     document.getElementById("tab-0").classList.add("active-tab");
     const firstSection = document.getElementById("section-0");
     firstSection.style.display = "block";
@@ -215,6 +214,6 @@ async function loadGoogleSheetData() {
 }
 
 loadGoogleSheetData();
-</script>
+  </script>
 </body>
 </html>
