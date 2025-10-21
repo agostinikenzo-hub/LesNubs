@@ -8,7 +8,7 @@
   <style>
     body { overflow-x: hidden; }
     .active-tab {
-      background-color: rgb(249 115 22); /* orange-500 */
+      background-color: rgb(249 115 22); /* Tailwind orange-500 */
       color: white;
     }
     .tab-btn {
@@ -16,17 +16,6 @@
     }
     .tab-btn:hover {
       background-color: rgb(251 146 60); /* orange-400 */
-    }
-
-    /* Fade animation */
-    .section {
-      opacity: 0;
-      transition: opacity 0.4s ease-in-out;
-      display: none;
-    }
-    .section.show {
-      display: block;
-      opacity: 1;
     }
   </style>
 </head>
@@ -46,7 +35,7 @@
   </main>
 
   <footer class="text-gray-500 text-sm mt-8 text-center">
-    Data auto-updates from Google Sheets.
+    Data auto-updates from Google Sheets.  
   </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
@@ -65,108 +54,125 @@ async function loadGoogleSheetData() {
     const rows = parsed.data.filter(r => r.some(c => c.trim() !== ""));
     const clean = v => String(v || "").replace(/^"|"$/g, "").replace(/""/g, '"').trim();
 
-    // Identify sections
+    // --- Identify each section (Season / Split 1 / Split 2 / Split 3) ---
     const firstRow = rows[0];
     const splitIndices = [];
     firstRow.forEach((cell, i) => {
       const upper = cell.toUpperCase();
       if (upper.includes("SPLIT") || upper.includes("SEASON")) splitIndices.push(i);
     });
+
     const sections = splitIndices.map((start, idx) => ({
       name: clean(firstRow[start]),
       start,
       end: splitIndices[idx + 1] || firstRow.length
     }));
 
-    // Parse data for each section
+    // --- Parse section content ---
     const sectionData = sections.map(sec => {
       const block = rows.map(r => r.slice(sec.start, sec.end));
-      return { ...sec, rows: block };
+      const groups = [];
+      let current = null;
+
+      for (const row of block) {
+        const label = clean(row[0]);
+        const isEmpty = row.every(c => !clean(c));
+        const isHeader = /Player|Kills|Avg|MVP|Assist|Death|KDA|Games/i.test(label);
+
+        if (isEmpty) {
+          if (current) groups.push(current);
+          current = null;
+          continue;
+        }
+        if (isHeader) {
+          if (current) groups.push(current);
+          current = { title: label, header: row, rows: [] };
+        } else if (current) {
+          current.rows.push(row);
+        }
+      }
+      if (current) groups.push(current);
+      return { ...sec, groups };
     });
 
-    // Create tabs
+    // --- Create tabs dynamically ---
     tabs.innerHTML = sections
-      .map(
-        (s, i) => `
+      .map((s, i) => `
         <button id="tab-${i}" data-idx="${i}" 
           class="tab-btn px-4 py-2 rounded-md bg-gray-100 text-gray-700 font-medium">
           ${s.name}
-        </button>`
-      )
+        </button>`)
       .join("");
 
-    // Render sections
+    // --- Render sections but keep them hidden initially ---
     container.innerHTML = sectionData
-      .map(
-        (sec, i) => `
-        <div id="section-${i}" class="section">
+      .map((sec, i) => `
+        <div id="section-${i}" class="section hidden">
           <div class="bg-white rounded-2xl shadow-xl border border-gray-200 p-6">
             <h2 class="text-2xl font-bold text-orange-600 mb-4 text-center">${sec.name}</h2>
-            <div class="overflow-x-auto">
-              <table class="min-w-full text-sm border-collapse">
-                <tbody>
-                  ${sec.rows
-                    .map(
-                      (r, ri) => `
-                    <tr class="${ri % 2 === 0 ? "bg-white" : "bg-gray-50"}">
-                      ${r
-                        .map((c, ci) => {
-                          const content = clean(c);
-                          const lower = clean(sec.rows[0][ci] || "").toLowerCase();
-                          let style = "px-3 py-1 border-b border-gray-200";
-                          if (lower.includes("op.gg")) {
-                            const num = parseFloat(content.replace(",", "."));
-                            const color =
-                              num >= 7
-                                ? "text-green-600 font-bold"
-                                : num < 5
-                                ? "text-red-500"
-                                : "text-gray-700";
-                            style += ` text-right ${color}`;
-                          } else if (!isNaN(parseFloat(content.replace(",", ".")))) {
-                            style += " text-right";
-                          }
-                          return `<td class="${style}">${content}</td>`;
-                        })
-                        .join("")}
-                    </tr>`
-                    )
-                    .join("")}
-                </tbody>
-              </table>
+            <div class="space-y-6">
+              ${sec.groups
+                .map(g => `
+                  <div class="border border-gray-300 rounded-lg overflow-x-auto">
+                    <div class="bg-orange-400 text-white font-semibold px-3 py-1 uppercase">${g.title}</div>
+                    <table class="min-w-full text-sm border-collapse">
+                      <thead class="bg-emerald-100 text-gray-900 font-semibold">
+                        <tr>${g.header.map(h => {
+                          const content = clean(h);
+                          const style = content.toLowerCase().includes("op.gg") 
+                            ? 'text-right text-orange-700 font-bold' : 'text-left';
+                          return `<th class="px-3 py-1 border-b border-gray-300 ${style}">${content}</th>`;
+                        }).join("")}</tr>
+                      </thead>
+                      <tbody>
+                        ${g.rows
+                          .map(
+                            (r, i) => `
+                              <tr class="${i % 2 === 0 ? "bg-white" : "bg-gray-50"}">
+                                ${r.map((c, j) => {
+                                  const content = clean(c);
+                                  const header = clean(g.header[j]).toLowerCase();
+                                  let style = "px-3 py-1 border-b border-gray-200";
+                                  if (header.includes("op.gg")) {
+                                    const num = parseFloat(content.replace(",", "."));
+                                    const color = num >= 7 ? "text-green-600 font-bold" : num < 5 ? "text-red-500" : "text-gray-700";
+                                    style += ` text-right ${color}`;
+                                  } else if (!isNaN(parseFloat(content.replace(",", ".")))) {
+                                    style += " text-right";
+                                  }
+                                  return `<td class="${style}">${content}</td>`;
+                                }).join("")}
+                              </tr>`
+                          )
+                          .join("")}
+                      </tbody>
+                    </table>
+                  </div>
+                `)
+                .join("")}
             </div>
           </div>
-        </div>`
-      )
+        </div>
+      `)
       .join("");
 
-    // Tab switching with fade
+    // --- Add tab switching logic ---
     const allTabs = document.querySelectorAll(".tab-btn");
     const allSections = document.querySelectorAll(".section");
 
     allTabs.forEach(tab => {
       tab.addEventListener("click", () => {
         const idx = tab.getAttribute("data-idx");
-
         allTabs.forEach(t => t.classList.remove("active-tab"));
-        allSections.forEach(sec => {
-          sec.classList.remove("show");
-          sec.style.display = "none";
-        });
-
+        allSections.forEach(sec => sec.classList.add("hidden"));
         tab.classList.add("active-tab");
-        const target = document.getElementById(`section-${idx}`);
-        target.style.display = "block";
-        setTimeout(() => target.classList.add("show"), 20);
+        document.getElementById(`section-${idx}`).classList.remove("hidden");
       });
     });
 
-    // Default section
+    // Default: show first section
     document.getElementById("tab-0").classList.add("active-tab");
-    const firstSection = document.getElementById("section-0");
-    firstSection.style.display = "block";
-    setTimeout(() => firstSection.classList.add("show"), 50);
-
+    document.getElementById("section-0").classList.remove("hidden");
     status.textContent = "Loaded successfully ✔";
   } catch (err) {
     console.error(err);
