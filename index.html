@@ -30,121 +30,145 @@
   </footer>
 
 <script>
-/* Robust CSV parser: respects quoted fields and escaped quotes ("") */
+/* --- CSV parser (handles quoted fields & "" escapes) --- */
 function parseCSV(text) {
   const rows = [];
   let row = [];
   let field = "";
   let inQuotes = false;
-
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
-
     if (inQuotes) {
       if (ch === '"') {
-        // double-quote escape => add single quote to field and skip next char
-        if (i + 1 < text.length && text[i + 1] === '"') {
-          field += '"';
-          i++;
-        } else {
-          inQuotes = false;
-        }
-      } else {
-        field += ch;
-      }
+        if (i + 1 < text.length && text[i + 1] === '"') { field += '"'; i++; }
+        else { inQuotes = false; }
+      } else { field += ch; }
     } else {
-      if (ch === '"') {
-        inQuotes = true;
-      } else if (ch === ',') {
-        row.push(field);
-        field = "";
-      } else if (ch === '\r') {
-        // ignore CR, LF will handle
-        continue;
-      } else if (ch === '\n') {
-        row.push(field);
-        rows.push(row);
-        row = [];
-        field = "";
-      } else {
-        field += ch;
-      }
+      if (ch === '"') { inQuotes = true; }
+      else if (ch === ',') { row.push(field); field = ""; }
+      else if (ch === '\r') { continue; }
+      else if (ch === '\n') { row.push(field); rows.push(row); row = []; field = ""; }
+      else { field += ch; }
     }
   }
-
-  // push last item if file doesn't end with newline
-  if (field !== "" || row.length > 0) {
-    row.push(field);
-    rows.push(row);
-  }
-
+  if (field !== "" || row.length > 0) { row.push(field); rows.push(row); }
   return rows;
 }
 
-/* escape HTML to avoid injection from sheet content */
+/* --- small HTML escape helper --- */
 function escapeHtml(str) {
   if (str == null) return "";
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+  return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
 
-async function loadGoogleSheetData() {
+/* --- main loader: markers are columns F, K, T by default --- */
+async function loadSheetIntoCards() {
+  // CONFIG: change markerLetters to whatever columns should start a new card
+  const markerLetters = ['F','K','T']; // e.g. F, K, T
+  const markerIndices = markerLetters.map(l => l.toUpperCase().charCodeAt(0) - 65); // A=0
+
   const sheetUrl = "https://docs.google.com/spreadsheets/d/15d-e7-S8A5p_uhAcHMaU2dCZc-csmZ7GJK9sd0iay8U/gviz/tq?tqx=out:csv";
-  const wrapper = document.getElementById("table-wrapper");
+  const container = document.getElementById("sheet-data");
+  if (!container) {
+    console.error("No element with id 'sheet-data' found.");
+    return;
+  }
+
   try {
-    wrapper.innerHTML = '<div class="text-gray-500 italic p-6">Loading data from Google Sheets...</div>';
+    container.innerHTML = '<div class="text-gray-500 italic p-6">Loading data and building cards...</div>';
     const res = await fetch(sheetUrl);
     const text = await res.text();
 
-    // parse and drop fully-empty rows
+    // parse csv and remove fully-empty rows
     const raw = parseCSV(text);
     const rows = raw.filter(r => r.some(c => String(c).trim() !== ""));
 
     if (rows.length === 0) {
-      wrapper.innerHTML = '<div class="text-gray-500 p-6">No data available in the sheet.</div>';
+      container.innerHTML = '<div class="text-gray-500 p-6">No data in sheet.</div>';
       return;
     }
 
+    // headers and data rows
     const headers = rows[0].map(h => String(h).trim());
     const dataRows = rows.slice(1);
 
-    // Build table HTML
-    // We place the full table inside an overflow-x-auto wrapper to keep page layout stable.
-    const tableHtml = `
-      <div class="overflow-x-auto">
-        <table class="min-w-full table-auto border-collapse">
-          <thead class="bg-blue-600 text-white">
-            <tr>
-              ${headers.map(h => `<th class="px-4 py-3 text-left font-medium border-b border-blue-700">${escapeHtml(h)}</th>`).join("")}
-            </tr>
-          </thead>
-          <tbody class="bg-white">
-            ${dataRows.map((r, i) => `
-              <tr class="${i % 2 === 0 ? 'bg-gray-50' : ''} hover:bg-blue-50">
-                ${headers.map((_, ci) => `<td class="px-4 py-2 align-top border-b border-gray-100 break-words max-w-[20rem]">${escapeHtml(r[ci] ?? '')}</td>`).join("")}
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
+    // We'll remove marker columns from display:
+    const displayCols = headers.map((h, idx) => ({ idx, name: h }))
+                               .filter(col => !markerIndices.includes(col.idx));
+
+    // Build sections by scanning rows sequentially.
+    // whenever a marker column has a non-empty cell we start a new section.
+    const sections = [];
+    let currentSection = null;
+
+    for (const row of dataRows) {
+      // check marker columns in left-to-right order; if any non-empty start a new section
+      let started = false;
+      for (const mi of markerIndices) {
+        const markerCell = (row[mi] ?? "").toString().trim();
+        if (markerCell !== "") {
+          // create a new section
+          currentSection = {
+            title: markerCell,
+            rows: []
+          };
+          sections.push(currentSection);
+          started = true;
+          // note: do not break — if multiple markers present in same row, we will create multiple sections
+          // each will be empty until we push row data below (we'll decide how to assign)
+        }
+      }
+
+      // Assign the row to the most recently created section (if any), else to "General"
+      if (!currentSection) {
+        currentSection = { title: "General", rows: [] };
+        sections.push(currentSection);
+      }
+
+      // store the whole row (we will only show displayCols)
+      currentSection.rows.push(row);
+    }
+
+    // DEBUG: log sections
+    console.log("Sections created:", sections.map(s => ({ title: s.title, rows: s.rows.length })));
+
+    // Render: create a grid of cards (each card contains an overflow-x-auto table)
+    container.classList.remove("italic", "text-gray-500");
+    container.innerHTML = `
+      <div class="grid gap-6 grid-cols-1 md:grid-cols-1 lg:grid-cols-2 xl:grid-cols-3">
+        ${sections.map(section => `
+          <section class="w-full min-w-0 bg-white shadow-lg rounded-xl p-6 border border-gray-200 flex flex-col">
+            <h2 class="text-lg font-semibold text-blue-700 mb-3">${escapeHtml(section.title)}</h2>
+            <div class="overflow-x-auto">
+              <table class="table-auto min-w-full text-sm">
+                <thead class="bg-blue-600 text-white">
+                  <tr>
+                    ${displayCols.map(col => `<th class="px-3 py-2 text-left font-medium border-b border-blue-700">${escapeHtml(col.name)}</th>`).join("")}
+                  </tr>
+                </thead>
+                <tbody>
+                  ${section.rows.map((r, i) => `
+                    <tr class="${i % 2 === 0 ? 'bg-gray-50' : 'bg-white'} hover:bg-blue-50">
+                      ${displayCols.map(dc => `<td class="px-3 py-2 border-b border-gray-100 break-words max-w-[18rem]">${escapeHtml(r[dc.idx] ?? '')}</td>`).join("")}
+                    </tr>
+                  `).join("")}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        `).join("")}
       </div>
     `;
-    wrapper.innerHTML = tableHtml;
-
-    // optional: small debug log in console
-    console.log("Loaded table:", { headersCount: headers.length, rows: dataRows.length });
 
   } catch (err) {
     console.error(err);
-    wrapper.innerHTML = '<div class="text-red-500 p-6">⚠️ Error loading data from Google Sheets.</div>';
+    container.innerHTML = '<div class="text-red-500 p-6">⚠️ Error loading data from Google Sheets.</div>';
   }
 }
 
-// initial load + auto-refresh every 5 minutes
-loadGoogleSheetData();
-setInterval(loadGoogleSheetData, 5 * 60 * 1000);
+/* initial load + auto-refresh */
+loadSheetIntoCards();
+setInterval(loadSheetIntoCards, 5 * 60 * 1000);
 </script>
 </body>
 </html>
