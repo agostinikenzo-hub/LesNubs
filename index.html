@@ -8,15 +8,17 @@
   <style>
     body { overflow-x: hidden; }
     .active-tab {
-      background-color: rgb(249 115 22);
+      background-color: rgb(249 115 22); /* orange-500 */
       color: white;
     }
     .tab-btn {
       transition: all 0.2s ease;
     }
     .tab-btn:hover {
-      background-color: rgb(251 146 60);
+      background-color: rgb(251 146 60); /* orange-400 */
     }
+
+    /* Fade animation */
     .section {
       opacity: 0;
       transition: opacity 0.4s ease-in-out;
@@ -63,14 +65,13 @@ async function loadGoogleSheetData() {
     const rows = parsed.data.filter(r => r.some(c => c.trim() !== ""));
     const clean = v => String(v || "").replace(/^"|"$/g, "").replace(/""/g, '"').trim();
 
-    // Identify section start points
+    // Identify sections
     const firstRow = rows[0];
     const splitIndices = [];
     firstRow.forEach((cell, i) => {
       const upper = cell.toUpperCase();
       if (upper.includes("SPLIT") || upper.includes("SEASON")) splitIndices.push(i);
     });
-
     const sections = splitIndices.map((start, idx) => ({
       name: clean(firstRow[start]),
       start,
@@ -80,108 +81,66 @@ async function loadGoogleSheetData() {
     // Parse data for each section
     const sectionData = sections.map(sec => {
       const block = rows.map(r => r.slice(sec.start, sec.end));
-      const groups = [];
-      let current = null;
-
-      for (const row of block) {
-        const cleanRow = row.map(clean);
-        const nonEmptyCount = cleanRow.filter(c => c !== "").length;
-        const firstCell = clean(cleanRow[0] || "");
-        const isEmpty = nonEmptyCount === 0;
-
-        // Identify potential header rows — must have at least 3 non-empty cells or contain key terms
-        const isHeader = nonEmptyCount >= 3 && /(Player|Kills|Avg|MVP|Assist|Death|KDA|Games|Max|Score|Part|W|L)/i.test(cleanRow.join(" "));
-
-        if (isEmpty) {
-          if (current) groups.push(current);
-          current = null;
-          continue;
-        }
-
-        if (isHeader) {
-          if (current) groups.push(current);
-          current = { title: firstCell || "Stats", header: cleanRow, rows: [] };
-        } else if (current) {
-          current.rows.push(cleanRow);
-        }
-      }
-
-      if (current) groups.push(current);
-      return { ...sec, groups };
+      return { ...sec, rows: block };
     });
 
     // Create tabs
     tabs.innerHTML = sections
-      .map((s, i) => `
+      .map(
+        (s, i) => `
         <button id="tab-${i}" data-idx="${i}" 
           class="tab-btn px-4 py-2 rounded-md bg-gray-100 text-gray-700 font-medium">
           ${s.name}
-        </button>`)
+        </button>`
+      )
       .join("");
 
-    // Render each section
+    // Render sections
     container.innerHTML = sectionData
-      .map((sec, i) => `
+      .map(
+        (sec, i) => `
         <div id="section-${i}" class="section">
           <div class="bg-white rounded-2xl shadow-xl border border-gray-200 p-6">
             <h2 class="text-2xl font-bold text-orange-600 mb-4 text-center">${sec.name}</h2>
-            <div class="space-y-6">
-              ${sec.groups
-                .map(g => `
-                  <div class="border border-gray-300 rounded-lg overflow-x-auto">
-                    <div class="bg-orange-400 text-white font-semibold px-3 py-1 uppercase">${g.title}</div>
-                    <table class="min-w-full text-sm border-collapse">
-                      <thead class="bg-emerald-100 text-gray-900 font-semibold">
-                        <tr>${g.header
-                          .map(h => {
-                            const content = clean(h);
-                            const style = content.toLowerCase().includes("op.gg")
-                              ? 'text-right text-orange-700 font-bold'
-                              : 'text-left';
-                            return `<th class="px-3 py-1 border-b border-gray-300 ${style}">${content}</th>`;
-                          })
-                          .join("")}</tr>
-                      </thead>
-                      <tbody>
-                        ${g.rows
-                          .map(
-                            (r, i) => `
-                              <tr class="${i % 2 === 0 ? "bg-white" : "bg-gray-50"}">
-                                ${r
-                                  .map((c, j) => {
-                                    const content = clean(c);
-                                    const header = clean(g.header[j] || "").toLowerCase();
-                                    let style = "px-3 py-1 border-b border-gray-200";
-                                    if (header.includes("op.gg")) {
-                                      const num = parseFloat(content.replace(",", "."));
-                                      const color =
-                                        num >= 7
-                                          ? "text-green-600 font-bold"
-                                          : num < 5
-                                          ? "text-red-500"
-                                          : "text-gray-700";
-                                      style += ` text-right ${color}`;
-                                    } else if (!isNaN(parseFloat(content.replace(",", ".")))) {
-                                      style += " text-right";
-                                    }
-                                    return `<td class="${style}">${content}</td>`;
-                                  })
-                                  .join("")}
-                              </tr>`
-                          )
-                          .join("")}
-                      </tbody>
-                    </table>
-                  </div>
-                `)
-                .join("")}
+            <div class="overflow-x-auto">
+              <table class="min-w-full text-sm border-collapse">
+                <tbody>
+                  ${sec.rows
+                    .map(
+                      (r, ri) => `
+                    <tr class="${ri % 2 === 0 ? "bg-white" : "bg-gray-50"}">
+                      ${r
+                        .map((c, ci) => {
+                          const content = clean(c);
+                          const lower = clean(sec.rows[0][ci] || "").toLowerCase();
+                          let style = "px-3 py-1 border-b border-gray-200";
+                          if (lower.includes("op.gg")) {
+                            const num = parseFloat(content.replace(",", "."));
+                            const color =
+                              num >= 7
+                                ? "text-green-600 font-bold"
+                                : num < 5
+                                ? "text-red-500"
+                                : "text-gray-700";
+                            style += ` text-right ${color}`;
+                          } else if (!isNaN(parseFloat(content.replace(",", ".")))) {
+                            style += " text-right";
+                          }
+                          return `<td class="${style}">${content}</td>`;
+                        })
+                        .join("")}
+                    </tr>`
+                    )
+                    .join("")}
+                </tbody>
+              </table>
             </div>
           </div>
-        </div>
-      `)
+        </div>`
+      )
       .join("");
 
-    // Tab switching with fade animation
+    // Tab switching with fade
     const allTabs = document.querySelectorAll(".tab-btn");
     const allSections = document.querySelectorAll(".section");
 
