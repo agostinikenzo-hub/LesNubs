@@ -15,9 +15,8 @@
 
   <main class="w-full max-w-6xl mx-auto">
     <div id="sheet-container" class="bg-white shadow rounded-lg p-4">
-      <div id="status" class="text-sm text-gray-600 mb-4">Initializing...</div>
-      <div id="sheet-data" class="text-center text-gray-500 italic">Waiting to start...</div>
-      <div id="debug" class="mt-4 text-xs text-gray-500"></div>
+      <div id="status" class="text-sm text-gray-600 mb-4">Loading data...</div>
+      <div id="sheet-data" class="text-center text-gray-500 italic">Fetching Google Sheet...</div>
     </div>
   </main>
 
@@ -25,119 +24,102 @@
     Tips: publish the Google Sheet to the web (File → Share → Publish to the web) — required for CSV fetch. Then hard-refresh the page.
   </footer>
 
-<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-<script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script>
 async function loadGoogleSheetData() {
   const sheetUrl =
     "https://docs.google.com/spreadsheets/d/15d-e7-S8A5p_uhAcHMaU2dCZc-csmZ7GJK9sd0iay8U/gviz/tq?tqx=out:csv";
   const container = document.getElementById("sheet-data");
-  container.innerHTML = '<div class="text-gray-500 italic p-6">Loading data…</div>';
 
   try {
     const res = await fetch(sheetUrl);
     const text = await res.text();
-
-    // Use PapaParse to correctly handle quotes, commas, etc.
     const parsed = Papa.parse(text, { skipEmptyLines: true });
-    const rows = parsed.data.filter((r) => r.some((c) => c.trim() !== ""));
-    const headers = rows[0];
-    const dataRows = rows.slice(1);
+    const rows = parsed.data.filter(r => r.some(c => c.trim() !== ""));
+    const clean = v => String(v || "").replace(/^"|"$/g, "").replace(/""/g, '"').trim();
 
-    // --- identify sections ---
-    const splitCols = [];
-    let seasonEnd = headers.length;
-    headers.forEach((h, i) => {
-      const label = h.toUpperCase();
-      if (label.includes("SPLIT")) splitCols.push(i);
+    // --- Detect column ranges for each Split or Season ---
+    const firstRow = rows[0];
+    const splitIndices = [];
+    firstRow.forEach((cell, i) => {
+      const upper = cell.toUpperCase();
+      if (upper.includes("SPLIT") || upper.includes("SEASON")) splitIndices.push(i);
+    });
+    const sections = splitIndices.map((start, idx) => ({
+      name: clean(firstRow[start]),
+      start,
+      end: splitIndices[idx + 1] || firstRow.length
+    }));
+
+    // --- Parse each section into subgroups (like "Player", "Avg Kills", "Kills") ---
+    const sectionData = sections.map(sec => {
+      const block = rows.map(r => r.slice(sec.start, sec.end));
+      const groups = [];
+      let current = null;
+
+      for (const row of block) {
+        const label = clean(row[0]);
+        const isEmpty = row.every(c => !clean(c));
+        const isHeader = /Player|Kills|Avg|MVP|Assist|Death|KDA/i.test(label);
+
+        if (isEmpty) {
+          if (current) groups.push(current);
+          current = null;
+          continue;
+        }
+        if (isHeader) {
+          if (current) groups.push(current);
+          current = { title: label, header: row, rows: [] };
+        } else if (current) {
+          current.rows.push(row);
+        }
+      }
+      if (current) groups.push(current);
+      return { ...sec, groups };
     });
 
-    if (splitCols.length > 0) seasonEnd = splitCols[0]; // everything before first split is season summary
-
-    // Clean values helper
-    const clean = (val) =>
-      String(val || "")
-        .replace(/^"|"$/g, "")
-        .replace(/""/g, '"')
-        .trim();
-
-    // build overview (season)
-    const seasonTable = {
-      name: "Season Overview",
-      headers: headers.slice(0, seasonEnd),
-      rows: dataRows.map((r) => r.slice(0, seasonEnd)),
-    };
-
-    // build each split table
-    const splits = [];
-    for (let i = 0; i < splitCols.length; i++) {
-      const start = splitCols[i];
-      const end = splitCols[i + 1] || headers.length;
-      const subHeaders = headers.slice(start, end);
-      const subRows = dataRows.map((r) => r.slice(start, end));
-      splits.push({ name: clean(subHeaders[0]), headers: subHeaders, rows: subRows });
-    }
-
-    // --- render ---
+    // --- Render everything ---
     container.innerHTML = `
-      <div class="max-w-6xl mx-auto space-y-6">
-        <!-- Season Overview -->
-        <div class="bg-white shadow-xl rounded-2xl p-6 border border-gray-200">
-          <h2 class="text-2xl font-bold text-blue-700 mb-4 text-center">${seasonTable.name}</h2>
-          ${buildTable(seasonTable.headers, seasonTable.rows, clean)}
-        </div>
-
-        <!-- Split Cards -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          ${splits
-            .map(
-              (s) => `
-            <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 overflow-x-auto">
-              <h3 class="text-lg font-semibold text-blue-700 mb-2 text-center">${s.name}</h3>
-              ${buildTable(s.headers, s.rows, clean)}
-            </div>`
-            )
-            .join("")}
-        </div>
-      </div>
-    `;
+      <div class="space-y-8">
+        ${sectionData
+          .map(sec => `
+            <div class="bg-white rounded-2xl shadow-xl border border-gray-200 p-6">
+              <h2 class="text-2xl font-bold text-orange-600 mb-4 text-center">${sec.name}</h2>
+              <div class="space-y-6">
+                ${sec.groups
+                  .map(g => `
+                    <div class="border border-gray-300 rounded-lg overflow-x-auto">
+                      <div class="bg-orange-400 text-white font-semibold px-3 py-1 uppercase">${g.title}</div>
+                      <table class="min-w-full text-sm border-collapse">
+                        <thead class="bg-emerald-100 text-gray-900 font-semibold">
+                          <tr>${g.header.map(h => `<th class="px-3 py-1 text-left border-b border-gray-300">${clean(h)}</th>`).join("")}</tr>
+                        </thead>
+                        <tbody>
+                          ${g.rows
+                            .map(
+                              (r, i) => `
+                                <tr class="${i % 2 === 0 ? "bg-white" : "bg-gray-50"}">
+                                  ${r.map(c => `<td class="px-3 py-1 border-b border-gray-200">${clean(c)}</td>`).join("")}
+                                </tr>`
+                            )
+                            .join("")}
+                        </tbody>
+                      </table>
+                    </div>
+                  `)
+                  .join("")}
+              </div>
+            </div>
+          `)
+          .join("")}
+      </div>`;
   } catch (err) {
     console.error(err);
-    container.innerHTML =
-      '<div class="text-red-600 p-6">⚠️ Error loading data. Check the sheet link or permissions.</div>';
+    container.innerHTML = '<div class="text-red-600 p-4">⚠️ Error loading data. Check the sheet link or permissions.</div>';
   }
 }
 
-// Helper to render HTML tables
-function buildTable(headers, rows, clean) {
-  return `
-    <div class="overflow-x-auto">
-      <table class="min-w-full text-sm border-collapse">
-        <thead class="bg-blue-600 text-white">
-          <tr>
-            ${headers
-              .map((h) => `<th class="px-3 py-2 text-left font-medium border-b border-blue-700">${clean(h)}</th>`)
-              .join("")}
-          </tr>
-        </thead>
-        <tbody>
-          ${rows
-            .map(
-              (r, i) => `
-            <tr class="${i % 2 === 0 ? "bg-white" : "bg-blue-100"}">
-              ${r
-                .map(
-                  (c) => `<td class="px-3 py-1 border-b border-blue-200">${clean(c)}</td>`
-                )
-                .join("")}
-            </tr>`
-            )
-            .join("")}
-        </tbody>
-      </table>
-    </div>`;
-}
-
 loadGoogleSheetData();
-</script>
+  </script>
 </body>
 </html>
