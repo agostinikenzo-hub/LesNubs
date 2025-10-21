@@ -3,44 +3,41 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Les Nubs — Live Table</title>
+  <title>Les Nubs — Debugging Loader</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    /* prevent page-wide horizontal scrolling */
-    body { overflow-x: hidden; }
-    /* subtle sticky header shadow */
-    thead th { position: sticky; top: 0; z-index: 10; }
-  </style>
+  <style>body { overflow-x: hidden; }</style>
 </head>
 <body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen flex flex-col items-center p-6">
-
   <header class="text-center my-6">
-    <h1 class="text-3xl font-bold text-blue-700">Les Nubs — Live Table</h1>
-    <p class="text-gray-600">Data loaded from Google Sheets · Auto-refresh every 5 minutes</p>
+    <h1 class="text-3xl font-bold text-blue-700">Les Nubs — Debugging Loader</h1>
+    <p class="text-gray-600">This page will show fetch/parsing status below. Open Console for full logs.</p>
   </header>
 
   <main class="w-full max-w-6xl mx-auto">
     <div id="sheet-container" class="bg-white shadow rounded-lg p-4">
-      <div id="table-wrapper" class="text-center text-gray-500 italic">Loading data from Google Sheets...</div>
+      <div id="status" class="text-sm text-gray-600 mb-4">Initializing...</div>
+      <div id="sheet-data" class="text-center text-gray-500 italic">Waiting to start...</div>
+      <div id="debug" class="mt-4 text-xs text-gray-500"></div>
     </div>
   </main>
 
   <footer class="text-gray-500 text-sm mt-8">
-    Powered by Google Sheets
+    Tips: publish the Google Sheet to the web (File → Share → Publish to the web) — required for CSV fetch. Then hard-refresh the page.
   </footer>
 
 <script>
-/* --- CSV parser (handles quoted fields & "" escapes) --- */
+/* Robust CSV parser (handles quoted fields and "" escapes) */
 function parseCSV(text) {
   const rows = [];
   let row = [];
   let field = "";
   let inQuotes = false;
+
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
     if (inQuotes) {
       if (ch === '"') {
-        if (i + 1 < text.length && text[i + 1] === '"') { field += '"'; i++; }
+        if (i + 1 < text.length && text[i+1] === '"') { field += '"'; i++; }
         else { inQuotes = false; }
       } else { field += ch; }
     } else {
@@ -55,120 +52,163 @@ function parseCSV(text) {
   return rows;
 }
 
-/* --- small HTML escape helper --- */
 function escapeHtml(str) {
   if (str == null) return "";
   return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
 
-/* --- main loader: markers are columns F, K, T by default --- */
-async function loadSheetIntoCards() {
-  // CONFIG: change markerLetters to whatever columns should start a new card
-  const markerLetters = ['F','K','T']; // e.g. F, K, T
-  const markerIndices = markerLetters.map(l => l.toUpperCase().charCodeAt(0) - 65); // A=0
+/* --- CONFIG --- */
+const sheetUrl = "https://docs.google.com/spreadsheets/d/15d-e7-S8A5p_uhAcHMaU2dCZc-csmZ7GJK9sd0iay8U/gviz/tq?tqx=out:csv";
+const markerLetters = ['F','K','T']; // which columns should start new cards (change if you like)
+const markerIndices = markerLetters.map(l => l.toUpperCase().charCodeAt(0) - 65); // A=0
 
-  const sheetUrl = "https://docs.google.com/spreadsheets/d/15d-e7-S8A5p_uhAcHMaU2dCZc-csmZ7GJK9sd0iay8U/gviz/tq?tqx=out:csv";
-  const container = document.getElementById("sheet-data");
-  if (!container) {
-    console.error("No element with id 'sheet-data' found.");
-    return;
-  }
+async function loadSheetWithDiagnostics() {
+  const statusEl = document.getElementById('status');
+  const dataEl = document.getElementById('sheet-data');
+  const debugEl = document.getElementById('debug');
+
+  function setStatus(txt) { statusEl.innerText = txt; console.log("[status]", txt); }
+  function appendDebug(txt) { debugEl.innerHTML += escapeHtml(txt) + "<br/>"; console.log("[debug]", txt); }
 
   try {
-    container.innerHTML = '<div class="text-gray-500 italic p-6">Loading data and building cards...</div>';
-    const res = await fetch(sheetUrl);
-    const text = await res.text();
+    setStatus("Fetching sheet URL...");
+    appendDebug("Fetching: " + sheetUrl);
 
-    // parse csv and remove fully-empty rows
-    const raw = parseCSV(text);
-    const rows = raw.filter(r => r.some(c => String(c).trim() !== ""));
-
-    if (rows.length === 0) {
-      container.innerHTML = '<div class="text-gray-500 p-6">No data in sheet.</div>';
+    const res = await fetch(sheetUrl, { mode: 'cors' });
+    appendDebug("Fetch returned: status=" + res.status + " " + res.statusText);
+    if (!res.ok) {
+      const bodyText = await res.text().catch(()=>"<unreadable body>");
+      setStatus("Fetch failed: HTTP " + res.status);
+      dataEl.innerHTML = '<div class="text-red-600 p-4">⚠️ Fetch failed — see debug below and browser console. HTTP ' + res.status + '</div>';
+      appendDebug("Response body (first 1000 chars): " + bodyText.slice(0,1000));
       return;
     }
 
-    // headers and data rows
+    setStatus("Reading response text...");
+    const text = await res.text();
+    appendDebug("Response length: " + text.length + " chars.");
+    if (text.length < 10) {
+      appendDebug("Response seems very short — maybe sheet not published. Response preview: " + escapeHtml(text.slice(0,500)));
+    }
+
+    setStatus("Parsing CSV...");
+    const raw = parseCSV(text);
+    appendDebug("Parsed rows (including empty rows): " + raw.length);
+
+    // drop fully-empty rows
+    const rows = raw.filter(r => r.some(c => String(c).trim() !== ""));
+    appendDebug("Rows after removing empty rows: " + rows.length);
+
+    if (rows.length === 0) {
+      setStatus("No data found in sheet.");
+      dataEl.innerHTML = '<div class="text-gray-600 p-4">No data rows found after parsing.</div>';
+      return;
+    }
+
     const headers = rows[0].map(h => String(h).trim());
     const dataRows = rows.slice(1);
+    appendDebug("Header columns: " + headers.length + " — " + headers.join(" | "));
 
-    // We'll remove marker columns from display:
-    const displayCols = headers.map((h, idx) => ({ idx, name: h }))
-                               .filter(col => !markerIndices.includes(col.idx));
-
-    // Build sections by scanning rows sequentially.
-    // whenever a marker column has a non-empty cell we start a new section.
+    // build sections (marker logic like before)
     const sections = [];
     let currentSection = null;
 
     for (const row of dataRows) {
-      // check marker columns in left-to-right order; if any non-empty start a new section
-      let started = false;
+      // check markers left-to-right, create new section per non-empty marker cell
       for (const mi of markerIndices) {
-        const markerCell = (row[mi] ?? "").toString().trim();
-        if (markerCell !== "") {
-          // create a new section
-          currentSection = {
-            title: markerCell,
-            rows: []
-          };
+        const val = (row[mi] ?? "").toString().trim();
+        if (val !== "") {
+          // new section with marker cell text as title
+          currentSection = { title: val, rows: [] };
           sections.push(currentSection);
-          started = true;
-          // note: do not break — if multiple markers present in same row, we will create multiple sections
-          // each will be empty until we push row data below (we'll decide how to assign)
+          appendDebug("Created section '" + val + "' (marker col index " + mi + ")");
         }
       }
-
-      // Assign the row to the most recently created section (if any), else to "General"
       if (!currentSection) {
         currentSection = { title: "General", rows: [] };
         sections.push(currentSection);
+        appendDebug("Created default 'General' section");
       }
-
-      // store the whole row (we will only show displayCols)
       currentSection.rows.push(row);
     }
 
-    // DEBUG: log sections
-    console.log("Sections created:", sections.map(s => ({ title: s.title, rows: s.rows.length })));
+    appendDebug("Total sections created: " + sections.length + " (titles: " + sections.map(s=>s.title).join(", ") + ")");
+    setStatus("Rendering " + sections.length + " sections...");
 
-    // Render: create a grid of cards (each card contains an overflow-x-auto table)
-    container.classList.remove("italic", "text-gray-500");
-    container.innerHTML = `
-      <div class="grid gap-6 grid-cols-1 md:grid-cols-1 lg:grid-cols-2 xl:grid-cols-3">
-        ${sections.map(section => `
-          <section class="w-full min-w-0 bg-white shadow-lg rounded-xl p-6 border border-gray-200 flex flex-col">
-            <h2 class="text-lg font-semibold text-blue-700 mb-3">${escapeHtml(section.title)}</h2>
-            <div class="overflow-x-auto">
-              <table class="table-auto min-w-full text-sm">
-                <thead class="bg-blue-600 text-white">
-                  <tr>
-                    ${displayCols.map(col => `<th class="px-3 py-2 text-left font-medium border-b border-blue-700">${escapeHtml(col.name)}</th>`).join("")}
-                  </tr>
-                </thead>
-                <tbody>
-                  ${section.rows.map((r, i) => `
-                    <tr class="${i % 2 === 0 ? 'bg-gray-50' : 'bg-white'} hover:bg-blue-50">
-                      ${displayCols.map(dc => `<td class="px-3 py-2 border-b border-gray-100 break-words max-w-[18rem]">${escapeHtml(r[dc.idx] ?? '')}</td>`).join("")}
-                    </tr>
-                  `).join("")}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        `).join("")}
-      </div>
-    `;
+    // remove markers from visible columns
+    const displayCols = headers.map((h, idx) => ({ idx, name: h }))
+                                .filter(col => !markerIndices.includes(col.idx));
+
+    // render simple cards (or if only one section, render a table)
+    // We'll render cards if sections>1 else show a single full-width table for simplicity
+    if (sections.length <= 1) {
+      // build single table with all rows
+      dataEl.innerHTML = buildSingleTable(headers, sections[0].rows);
+    } else {
+      dataEl.innerHTML = buildCardsHtml(sections, displayCols);
+    }
+
+    setStatus("Loaded. Open console for debug logs.");
+    appendDebug("Render complete. headersCount=" + headers.length + " totalRows=" + dataRows.length);
 
   } catch (err) {
     console.error(err);
-    container.innerHTML = '<div class="text-red-500 p-6">⚠️ Error loading data from Google Sheets.</div>';
+    setStatus("Error during fetch/parse.");
+    dataEl.innerHTML = '<div class="text-red-600 p-4">⚠️ Error: ' + escapeHtml(String(err.message || err)) + '</div>';
+    appendDebug("Exception: " + (err && err.stack ? err.stack : String(err)));
   }
 }
 
-/* initial load + auto-refresh */
-loadSheetIntoCards();
-setInterval(loadSheetIntoCards, 5 * 60 * 1000);
+/* helpers to build HTML output */
+function buildSingleTable(headers, rows) {
+  return `
+    <div class="overflow-x-auto">
+      <table class="min-w-full table-auto border-collapse">
+        <thead class="bg-blue-600 text-white">
+          <tr>
+            ${headers.map(h => `<th class="px-4 py-3 text-left font-medium border-b border-blue-700">${escapeHtml(h)}</th>`).join("")}
+          </tr>
+        </thead>
+        <tbody class="bg-white">
+          ${rows.map((r, i) => `
+            <tr class="${i%2===0 ? 'bg-gray-50' : ''} hover:bg-blue-50">
+              ${headers.map((_, ci) => `<td class="px-4 py-2 align-top border-b border-gray-100 break-words max-w-[20rem]">${escapeHtml(r[ci] ?? '')}</td>`).join("")}
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function buildCardsHtml(sections, displayCols) {
+  return `
+    <div class="grid gap-6 grid-cols-1 md:grid-cols-1 lg:grid-cols-2 xl:grid-cols-3">
+      ${sections.map(sec => `
+        <section class="w-full min-w-0 bg-white shadow-lg rounded-xl p-6 border border-gray-200 flex flex-col">
+          <h2 class="text-lg font-semibold text-blue-700 mb-3">${escapeHtml(sec.title)}</h2>
+          <div class="overflow-x-auto">
+            <table class="table-auto min-w-full text-sm">
+              <thead class="bg-blue-600 text-white">
+                <tr>
+                  ${displayCols.map(dc => `<th class="px-3 py-2 text-left font-medium border-b border-blue-700">${escapeHtml(dc.name)}</th>`).join("")}
+                </tr>
+              </thead>
+              <tbody>
+                ${sec.rows.map((r, i) => `
+                  <tr class="${i%2===0 ? 'bg-gray-50' : 'bg-white'} hover:bg-blue-50">
+                    ${displayCols.map(dc => `<td class="px-3 py-2 border-b border-gray-100 break-words max-w-[18rem]">${escapeHtml(r[dc.idx] ?? '')}</td>`).join("")}
+                  </tr>`).join("")}
+              </tbody>
+            </table>
+          </div>
+        </section>`).join("")}
+    </div>
+  `;
+}
+
+/* initial load + refresh */
+loadSheetWithDiagnostics();
+setInterval(loadSheetWithDiagnostics, 5 * 60 * 1000);
 </script>
 </body>
 </html>
