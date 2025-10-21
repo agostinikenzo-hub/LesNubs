@@ -5,8 +5,21 @@
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Les Nübs — The Complete Chronicles - Season 25</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <style>body { overflow-x: hidden; }</style>
+  <style>
+    body { overflow-x: hidden; }
+    .active-tab {
+      background-color: rgb(249 115 22); /* Tailwind orange-500 */
+      color: white;
+    }
+    .tab-btn {
+      transition: all 0.2s ease;
+    }
+    .tab-btn:hover {
+      background-color: rgb(251 146 60); /* orange-400 */
+    }
+  </style>
 </head>
+
 <body class="bg-gradient-to-br from-red-50 to-indigo-100 min-h-screen flex flex-col items-center p-6">
   <header class="text-center my-6">
     <h1 class="text-3xl font-bold text-orange-500">Les Nübs — The Complete Chronicles - Season 25</h1>
@@ -16,12 +29,13 @@
   <main class="w-full max-w-6xl mx-auto">
     <div id="sheet-container" class="bg-white shadow rounded-lg p-4">
       <div id="status" class="text-sm text-gray-600 mb-4">Loading data...</div>
-      <div id="sheet-data" class="text-center text-gray-500 italic">Fetching Google Sheet...</div>
+      <div id="tabs" class="flex flex-wrap justify-center gap-2 mb-6"></div>
+      <div id="sheet-data" class="space-y-8"></div>
     </div>
   </main>
 
-  <footer class="text-gray-500 text-sm mt-8">
-    Tips: publish the Google Sheet to the web (File → Share → Publish to the web) — required for CSV fetch. Then hard-refresh the page.
+  <footer class="text-gray-500 text-sm mt-8 text-center">
+    Data auto-updates from Google Sheets.  
   </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
@@ -30,6 +44,8 @@ async function loadGoogleSheetData() {
   const sheetUrl =
     "https://docs.google.com/spreadsheets/d/15d-e7-S8A5p_uhAcHMaU2dCZc-csmZ7GJK9sd0iay8U/gviz/tq?tqx=out:csv";
   const container = document.getElementById("sheet-data");
+  const tabs = document.getElementById("tabs");
+  const status = document.getElementById("status");
 
   try {
     const res = await fetch(sheetUrl);
@@ -38,20 +54,21 @@ async function loadGoogleSheetData() {
     const rows = parsed.data.filter(r => r.some(c => c.trim() !== ""));
     const clean = v => String(v || "").replace(/^"|"$/g, "").replace(/""/g, '"').trim();
 
-    // --- Detect column ranges for each Split or Season ---
+    // --- Identify each section (Season / Split 1 / Split 2 / Split 3) ---
     const firstRow = rows[0];
     const splitIndices = [];
     firstRow.forEach((cell, i) => {
       const upper = cell.toUpperCase();
       if (upper.includes("SPLIT") || upper.includes("SEASON")) splitIndices.push(i);
     });
+
     const sections = splitIndices.map((start, idx) => ({
       name: clean(firstRow[start]),
       start,
       end: splitIndices[idx + 1] || firstRow.length
     }));
 
-    // --- Parse each section into subgroups (like "Player", "Avg Kills", "Kills") ---
+    // --- Parse section content ---
     const sectionData = sections.map(sec => {
       const block = rows.map(r => r.slice(sec.start, sec.end));
       const groups = [];
@@ -60,7 +77,7 @@ async function loadGoogleSheetData() {
       for (const row of block) {
         const label = clean(row[0]);
         const isEmpty = row.every(c => !clean(c));
-        const isHeader = /Player|Kills|Avg|MVP|Assist|Death|KDA/i.test(label);
+        const isHeader = /Player|Kills|Avg|MVP|Assist|Death|KDA|Games/i.test(label);
 
         if (isEmpty) {
           if (current) groups.push(current);
@@ -78,44 +95,88 @@ async function loadGoogleSheetData() {
       return { ...sec, groups };
     });
 
-    // --- Render everything ---
-    container.innerHTML = `
-      <div class="space-y-8">
-        ${sectionData
-          .map(sec => `
-            <div class="bg-white rounded-2xl shadow-xl border border-gray-200 p-6">
-              <h2 class="text-2xl font-bold text-orange-600 mb-4 text-center">${sec.name}</h2>
-              <div class="space-y-6">
-                ${sec.groups
-                  .map(g => `
-                    <div class="border border-gray-300 rounded-lg overflow-x-auto">
-                      <div class="bg-orange-400 text-white font-semibold px-3 py-1 uppercase">${g.title}</div>
-                      <table class="min-w-full text-sm border-collapse">
-                        <thead class="bg-emerald-100 text-gray-900 font-semibold">
-                          <tr>${g.header.map(h => `<th class="px-3 py-1 text-left border-b border-gray-300">${clean(h)}</th>`).join("")}</tr>
-                        </thead>
-                        <tbody>
-                          ${g.rows
-                            .map(
-                              (r, i) => `
-                                <tr class="${i % 2 === 0 ? "bg-white" : "bg-gray-50"}">
-                                  ${r.map(c => `<td class="px-3 py-1 border-b border-gray-200">${clean(c)}</td>`).join("")}
-                                </tr>`
-                            )
-                            .join("")}
-                        </tbody>
-                      </table>
-                    </div>
-                  `)
-                  .join("")}
-              </div>
+    // --- Create tabs dynamically ---
+    tabs.innerHTML = sections
+      .map((s, i) => `
+        <button id="tab-${i}" data-idx="${i}" 
+          class="tab-btn px-4 py-2 rounded-md bg-gray-100 text-gray-700 font-medium">
+          ${s.name}
+        </button>`)
+      .join("");
+
+    // --- Render sections but keep them hidden initially ---
+    container.innerHTML = sectionData
+      .map((sec, i) => `
+        <div id="section-${i}" class="section hidden">
+          <div class="bg-white rounded-2xl shadow-xl border border-gray-200 p-6">
+            <h2 class="text-2xl font-bold text-orange-600 mb-4 text-center">${sec.name}</h2>
+            <div class="space-y-6">
+              ${sec.groups
+                .map(g => `
+                  <div class="border border-gray-300 rounded-lg overflow-x-auto">
+                    <div class="bg-orange-400 text-white font-semibold px-3 py-1 uppercase">${g.title}</div>
+                    <table class="min-w-full text-sm border-collapse">
+                      <thead class="bg-emerald-100 text-gray-900 font-semibold">
+                        <tr>${g.header.map(h => {
+                          const content = clean(h);
+                          const style = content.toLowerCase().includes("op.gg") 
+                            ? 'text-right text-orange-700 font-bold' : 'text-left';
+                          return `<th class="px-3 py-1 border-b border-gray-300 ${style}">${content}</th>`;
+                        }).join("")}</tr>
+                      </thead>
+                      <tbody>
+                        ${g.rows
+                          .map(
+                            (r, i) => `
+                              <tr class="${i % 2 === 0 ? "bg-white" : "bg-gray-50"}">
+                                ${r.map((c, j) => {
+                                  const content = clean(c);
+                                  const header = clean(g.header[j]).toLowerCase();
+                                  let style = "px-3 py-1 border-b border-gray-200";
+                                  if (header.includes("op.gg")) {
+                                    const num = parseFloat(content.replace(",", "."));
+                                    const color = num >= 7 ? "text-green-600 font-bold" : num < 5 ? "text-red-500" : "text-gray-700";
+                                    style += ` text-right ${color}`;
+                                  } else if (!isNaN(parseFloat(content.replace(",", ".")))) {
+                                    style += " text-right";
+                                  }
+                                  return `<td class="${style}">${content}</td>`;
+                                }).join("")}
+                              </tr>`
+                          )
+                          .join("")}
+                      </tbody>
+                    </table>
+                  </div>
+                `)
+                .join("")}
             </div>
-          `)
-          .join("")}
-      </div>`;
+          </div>
+        </div>
+      `)
+      .join("");
+
+    // --- Add tab switching logic ---
+    const allTabs = document.querySelectorAll(".tab-btn");
+    const allSections = document.querySelectorAll(".section");
+
+    allTabs.forEach(tab => {
+      tab.addEventListener("click", () => {
+        const idx = tab.getAttribute("data-idx");
+        allTabs.forEach(t => t.classList.remove("active-tab"));
+        allSections.forEach(sec => sec.classList.add("hidden"));
+        tab.classList.add("active-tab");
+        document.getElementById(`section-${idx}`).classList.remove("hidden");
+      });
+    });
+
+    // Default: show first section
+    document.getElementById("tab-0").classList.add("active-tab");
+    document.getElementById("section-0").classList.remove("hidden");
+    status.textContent = "Loaded successfully ✔";
   } catch (err) {
     console.error(err);
-    container.innerHTML = '<div class="text-red-600 p-4">⚠️ Error loading data. Check the sheet link or permissions.</div>';
+    status.textContent = "⚠️ Error loading data. Check your Google Sheet permissions.";
   }
 }
 
