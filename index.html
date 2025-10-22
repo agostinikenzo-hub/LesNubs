@@ -41,7 +41,6 @@ async function loadGoogleSheetData() {
     "https://docs.google.com/spreadsheets/d/15d-e7-S8A5p_uhAcHMaU2dCZc-csmZ7GJK9sd0iay8U/gviz/tq?tqx=out:csv";
   const container = document.getElementById("sheet-data");
   const tabs = document.getElementById("tabs");
-  const summary = document.getElementById("summary");
   const status = document.getElementById("status");
 
   try {
@@ -51,7 +50,7 @@ async function loadGoogleSheetData() {
     const rows = parsed.data.filter(r => r.some(c => c.trim() !== ""));
     const clean = v => String(v || "").replace(/^"|"$/g, "").replace(/""/g, '"').trim();
 
-    // Identify sections (Splits)
+    // --- Identify sections (Splits / Season) ---
     const firstRow = rows[0];
     const splitIndices = [];
     firstRow.forEach((cell, i) => {
@@ -65,18 +64,15 @@ async function loadGoogleSheetData() {
       end: splitIndices[idx + 1] || firstRow.length
     }));
 
-    // Parse each section
+    // --- Parse mini-tables inside each section ---
     const sectionData = sections.map(sec => {
       const block = rows.map(r => r.slice(sec.start, sec.end));
       const groups = [];
       let current = null;
-
       for (const row of block) {
         const label = clean(row[0]);
         const isEmpty = row.every(c => !clean(c));
         if (isEmpty) { if (current) groups.push(current); current = null; continue; }
-
-        // Titles (e.g. "Avg. Kill Participation & OP.GG Score")
         if (/[A-Z]/.test(label) && !/JANSEN|SWEENEY|BENZ|OTA|ACHTEN|HH/i.test(label)) {
           if (current) groups.push(current);
           current = { title: label, rows: [] };
@@ -88,11 +84,12 @@ async function loadGoogleSheetData() {
       return { ...sec, groups };
     });
 
-    // Find last split
+    // --- Pick last split with player data ---
     const lastSplit = [...sectionData].reverse().find(sec =>
       sec.groups.some(g => g.rows.some(r => /JANSEN|SWEENEY|BENZ|OTA|ACHTEN|HH/i.test(r.join(" "))))
     );
 
+    // --- Build Player Stats ---
     let playerStats = [];
     if (lastSplit) {
       for (const g of lastSplit.groups) {
@@ -106,106 +103,113 @@ async function loadGoogleSheetData() {
             if (!/JANSEN|SWEENEY|BENZ|OTA|ACHTEN|HH/i.test(name)) continue;
             const nums = row.map(c => parseFloat(c.replace(",", "."))).filter(n => !isNaN(n));
             const value = nums[0] || null;
-
             let player = playerStats.find(p => p.player === name);
-            if (!player) {
-              player = { player: name, kda: null, opgg: null };
-              playerStats.push(player);
-            }
-
+            if (!player) player = { player: name, kda: null, opgg: null };
             if (isKDA && value) player.kda = value;
             if (isOPGG && value) player.opgg = value;
+            if (!playerStats.find(p => p.player === name)) playerStats.push(player);
           }
         }
       }
     }
 
-    console.log("✅ Parsed playerStats:", playerStats);
-
-    // Compute top stats
-    const topKDA = playerStats.reduce((a, b) => (b.kda > a.kda ? b : a), { kda: -Infinity });
-    const topOPGG = playerStats.reduce((a, b) => (b.opgg > a.opgg ? b : a), { opgg: -Infinity });
+    // --- Compute stats ---
+    const top3KDA = [...playerStats].sort((a, b) => (b.kda || 0) - (a.kda || 0)).slice(0, 3);
+    const top3OPGG = [...playerStats].sort((a, b) => (b.opgg || 0) - (a.opgg || 0)).slice(0, 3);
     const avgKDA = playerStats.length
       ? (playerStats.reduce((s, p) => s + (p.kda || 0), 0) / playerStats.filter(p => p.kda).length).toFixed(2)
       : "N/A";
-    const top3 = [...playerStats].sort((a, b) => (b.kda || 0) - (a.kda || 0)).slice(0, 3);
 
-    // Summary cards
-    summary.innerHTML = `
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-4 text-center mb-6">
-        <div class="card bg-orange-100 text-orange-700 rounded-xl p-4 shadow">
-          <h3 class="font-bold text-lg">🏆 KDA KING</h3>
-          <p>${topKDA.player || "N/A"} — ${isFinite(topKDA.kda) ? topKDA.kda.toFixed(2) : "N/A"}</p>
+    // --- Summary Cards ---
+    const summaryHTML = `
+      <div id="summary" class="grid grid-cols-1 md:grid-cols-3 gap-4 text-center mb-6">
+        <div id="card-kda" class="cursor-pointer card bg-orange-100 text-orange-700 rounded-xl p-4 shadow hover:bg-orange-200 transition">
+          <h3 class="font-bold text-lg">🏆 Top 3 KDA Kings</h3>
+          ${top3KDA.map((p, i) => `<p>${i + 1}. ${p.player} — ${p.kda?.toFixed(2) ?? "N/A"}</p>`).join("")}
         </div>
-        <div class="card bg-green-100 text-green-700 rounded-xl p-4 shadow">
-          <h3 class="font-bold text-lg">💥 Highest OP.GG</h3>
-          <p>${topOPGG.player || "N/A"} — ${isFinite(topOPGG.opgg) ? topOPGG.opgg.toFixed(2) : "N/A"}</p>
+        <div id="card-opgg" class="cursor-pointer card bg-green-100 text-green-700 rounded-xl p-4 shadow hover:bg-green-200 transition">
+          <h3 class="font-bold text-lg">💥 Top 3 OP.GG Scores</h3>
+          ${top3OPGG.map((p, i) => `<p>${i + 1}. ${p.player} — ${p.opgg?.toFixed(2) ?? "N/A"}</p>`).join("")}
         </div>
         <div class="card bg-indigo-100 text-indigo-700 rounded-xl p-4 shadow">
           <h3 class="font-bold text-lg">📊 Team Avg KDA</h3>
           <p>${avgKDA}</p>
         </div>
-        <div class="card bg-yellow-100 text-yellow-700 rounded-xl p-4 shadow">
-          <h3 class="font-bold text-lg">🥇 Top 3 Players (KDA)</h3>
-          ${top3.map((p, i) => `<p>${i + 1}. ${p.player} — ${p.kda?.toFixed(2) || "N/A"}</p>`).join("") || "<p>N/A</p>"}
-        </div>
-      </div>
-    `;
+      </div>`;
+    tabs.insertAdjacentHTML("beforebegin", summaryHTML);
 
-    // Render Tabs + Sections (same)
-    tabs.innerHTML = sections.map((s, i) => `
-      <button id="tab-${i}" data-idx="${i}" 
-        class="tab-btn px-4 py-2 rounded-md bg-gray-100 text-gray-700 font-medium">${s.name}</button>`
-    ).join("");
+    // --- Render tab buttons ---
+    tabs.innerHTML = sections
+      .map((s, i) => `<button id="tab-${i}" data-idx="${i}"
+          class="tab-btn px-4 py-2 rounded-md bg-gray-100 text-gray-700 font-medium">${s.name}</button>`)
+      .join("");
 
-    container.innerHTML = sectionData.map((sec, i) => `
-      <div id="section-${i}" class="section hidden">
-        <div class="bg-white rounded-2xl shadow-xl border border-gray-200 p-6">
-          <h2 class="text-2xl font-bold text-orange-600 mb-4 text-center">${sec.name}</h2>
-          <div class="space-y-8">
-            ${sec.groups.map(g => `
-              <div class="border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-                <div class="bg-orange-400 text-white font-semibold px-3 py-2 uppercase tracking-wide">${g.title}</div>
-                <div class="overflow-x-auto">
-                  <table class="min-w-full text-sm border-collapse">
-                    <tbody>
-                      ${g.rows.map((r, i) => `
-                        <tr class="${i % 2 === 0 ? "bg-white" : "bg-gray-50"} hover:bg-orange-50 transition">
-                          ${r.map(c => `<td class="px-3 py-2 border-b border-gray-200">${clean(c)}</td>`).join("")}
-                        </tr>`).join("")}
-                    </tbody>
-                  </table>
-                </div>
-              </div>`).join("")}
+    // --- Render sections ---
+    container.innerHTML = sectionData
+      .map((sec, i) => `
+        <div id="section-${i}" class="section hidden">
+          <div class="bg-white rounded-2xl shadow-xl border border-gray-200 p-6">
+            <h2 class="text-2xl font-bold text-orange-600 mb-4 text-center">${sec.name}</h2>
+            <div class="space-y-8">
+              ${sec.groups.map(g => `
+                <div class="border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                  <div class="bg-orange-400 text-white font-semibold px-3 py-2 uppercase tracking-wide">${g.title}</div>
+                  <div class="overflow-x-auto">
+                    <table class="min-w-full text-sm border-collapse">
+                      <tbody>
+                        ${g.rows.map((r, i) => `
+                          <tr class="${i % 2 === 0 ? "bg-white" : "bg-gray-50"} hover:bg-orange-50 transition">
+                            ${r.map(c => `<td class="px-3 py-2 border-b border-gray-200">${clean(c)}</td>`).join("")}
+                          </tr>`).join("")}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>`).join("")}
+            </div>
           </div>
-        </div>
-      </div>
-    `).join("");
+        </div>`).join("");
 
-    // Tab switching
+    // --- Tab switching ---
     const allTabs = document.querySelectorAll(".tab-btn");
     const allSections = document.querySelectorAll(".section");
     allTabs.forEach(tab => {
       tab.addEventListener("click", () => {
-        const idx = tab.getAttribute("data-idx");
+        const idx = tab.dataset.idx;
         allTabs.forEach(t => t.classList.remove("active-tab"));
         allSections.forEach(sec => sec.classList.add("hidden"));
         tab.classList.add("active-tab");
         document.getElementById(`section-${idx}`).classList.remove("hidden");
       });
     });
-
     document.getElementById("tab-0").classList.add("active-tab");
     document.getElementById("section-0").classList.remove("hidden");
+
+    // --- Clickable summary cards (highlight players) ---
+    function highlightPlayers(names) {
+      document.querySelectorAll("td").forEach(td => td.classList.remove("bg-yellow-100", "font-bold"));
+      names.forEach(name => {
+        document.querySelectorAll("td").forEach(td => {
+          if (td.textContent.trim().toUpperCase() === name.toUpperCase())
+            td.classList.add("bg-yellow-100", "font-bold");
+        });
+      });
+    }
+    document.getElementById("card-kda").addEventListener("click", () =>
+      highlightPlayers(top3KDA.map(p => p.player))
+    );
+    document.getElementById("card-opgg").addEventListener("click", () =>
+      highlightPlayers(top3OPGG.map(p => p.player))
+    );
+
     status.textContent = "Loaded successfully ✔";
   } catch (err) {
     console.error("Error loading sheet:", err);
     status.textContent = "⚠️ Error loading data. Check your Google Sheet permissions.";
   }
 }
-
 loadGoogleSheetData();
 </script>
+
 
 </body>
 </html>
