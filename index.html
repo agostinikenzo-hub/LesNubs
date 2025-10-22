@@ -90,22 +90,28 @@ async function loadGoogleSheetData() {
 
     let playerStats = [];
     if (lastSplit) {
-      for (const g of lastSplit.groups) {
-        const playerCol = g.header.findIndex(h => /Player/i.test(h));
-        const kdaCol = g.header.findIndex(h => /(KDA KING|KDA|KDA RATIO)/i.test(h));
-        const opggCol = g.header.findIndex(h => /(OP\.GG|OPGG|OP GG|SCORE)/i.test(h));
+  console.log("✅ Found last split:", lastSplit.name);
+  for (const g of lastSplit.groups) {
+    console.log("🔹 Group title:", g.title);
+    console.log("🔹 Headers:", g.header);
+    console.log("🔹 First few rows:", g.rows.slice(0, 3));
 
-        if (playerCol >= 0 && kdaCol >= 0) {
-          for (const r of g.rows) {
-            const player = clean(r[playerCol]);
-            if (!player || /team avg/i.test(player)) continue;
-            const kda = parseFloat((r[kdaCol] || "").replace(",", "."));
-            const opgg = opggCol >= 0 ? parseFloat((r[opggCol] || "").replace(",", ".")) : null;
-            if (!isNaN(kda)) playerStats.push({ player, kda, opgg });
-          }
-        }
+    const playerCol = g.header.findIndex(h => /Player/i.test(h));
+    const kdaCol = g.header.findIndex(h => /(KDA KING|KDA|KDA RATIO)/i.test(h));
+    const opggCol = g.header.findIndex(h => /(OP\.GG|OPGG|OP GG|SCORE)/i.test(h));
+
+    if (playerCol >= 0 && kdaCol >= 0) {
+      for (const r of g.rows) {
+        const player = clean(r[playerCol]);
+        if (!player || /team avg/i.test(player)) continue;
+        const kda = parseFloat((r[kdaCol] || "").replace(",", "."));
+        const opgg = opggCol >= 0 ? parseFloat((r[opggCol] || "").replace(",", ".")) : null;
+        if (!isNaN(kda)) playerStats.push({ player, kda, opgg });
       }
     }
+  }
+}
+
 
     console.log("Detected players:", playerStats);
 
