@@ -74,56 +74,63 @@ async function loadGoogleSheetData() {
       for (const row of block) {
         const label = clean(row[0]);
         const isEmpty = row.every(c => !clean(c));
-        const isHeader = /Player|Kills|Avg|MVP|Assist|Death|KDA|Games|Score/i.test(label);
         if (isEmpty) { if (current) groups.push(current); current = null; continue; }
-        if (isHeader) { if (current) groups.push(current); current = { title: label, header: row, rows: [] }; }
-        else if (current) current.rows.push(row);
+
+        // Titles (e.g. "Avg. Kill Participation & OP.GG Score")
+        if (/[A-Z]/.test(label) && !/JANSEN|SWEENEY|BENZ|OTA|ACHTEN|HH/i.test(label)) {
+          if (current) groups.push(current);
+          current = { title: label, rows: [] };
+        } else if (current) {
+          current.rows.push(row);
+        }
       }
       if (current) groups.push(current);
       return { ...sec, groups };
     });
 
-    // Find the last split with real player rows
+    // Find last split
     const lastSplit = [...sectionData].reverse().find(sec =>
       sec.groups.some(g => g.rows.some(r => /JANSEN|SWEENEY|BENZ|OTA|ACHTEN|HH/i.test(r.join(" "))))
     );
 
     let playerStats = [];
     if (lastSplit) {
-  console.log("✅ Found last split:", lastSplit.name);
-  for (const g of lastSplit.groups) {
-    console.log("🔹 Group title:", g.title);
-    console.log("🔹 Headers:", g.header);
-    console.log("🔹 First few rows:", g.rows.slice(0, 3));
+      for (const g of lastSplit.groups) {
+        const title = g.title.toLowerCase();
+        const isKDA = title.includes("kda");
+        const isOPGG = title.includes("op.gg") || title.includes("score");
 
-    const playerCol = g.header.findIndex(h => /Player/i.test(h));
-    const kdaCol = g.header.findIndex(h => /(KDA KING|KDA|KDA RATIO)/i.test(h));
-    const opggCol = g.header.findIndex(h => /(OP\.GG|OPGG|OP GG|SCORE)/i.test(h));
+        if (isKDA || isOPGG) {
+          for (const row of g.rows) {
+            const name = clean(row[0]);
+            if (!/JANSEN|SWEENEY|BENZ|OTA|ACHTEN|HH/i.test(name)) continue;
+            const nums = row.map(c => parseFloat(c.replace(",", "."))).filter(n => !isNaN(n));
+            const value = nums[0] || null;
 
-    if (playerCol >= 0 && kdaCol >= 0) {
-      for (const r of g.rows) {
-        const player = clean(r[playerCol]);
-        if (!player || /team avg/i.test(player)) continue;
-        const kda = parseFloat((r[kdaCol] || "").replace(",", "."));
-        const opgg = opggCol >= 0 ? parseFloat((r[opggCol] || "").replace(",", ".")) : null;
-        if (!isNaN(kda)) playerStats.push({ player, kda, opgg });
+            let player = playerStats.find(p => p.player === name);
+            if (!player) {
+              player = { player: name, kda: null, opgg: null };
+              playerStats.push(player);
+            }
+
+            if (isKDA && value) player.kda = value;
+            if (isOPGG && value) player.opgg = value;
+          }
+        }
       }
     }
-  }
-}
 
-
-    console.log("Detected players:", playerStats);
+    console.log("✅ Parsed playerStats:", playerStats);
 
     // Compute top stats
     const topKDA = playerStats.reduce((a, b) => (b.kda > a.kda ? b : a), { kda: -Infinity });
     const topOPGG = playerStats.reduce((a, b) => (b.opgg > a.opgg ? b : a), { opgg: -Infinity });
     const avgKDA = playerStats.length
-      ? (playerStats.reduce((s, p) => s + p.kda, 0) / playerStats.length).toFixed(2)
+      ? (playerStats.reduce((s, p) => s + (p.kda || 0), 0) / playerStats.filter(p => p.kda).length).toFixed(2)
       : "N/A";
-    const top3 = [...playerStats].sort((a, b) => b.kda - a.kda).slice(0, 3);
+    const top3 = [...playerStats].sort((a, b) => (b.kda || 0) - (a.kda || 0)).slice(0, 3);
 
-    // Render summary cards
+    // Summary cards
     summary.innerHTML = `
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4 text-center mb-6">
         <div class="card bg-orange-100 text-orange-700 rounded-xl p-4 shadow">
@@ -140,14 +147,15 @@ async function loadGoogleSheetData() {
         </div>
         <div class="card bg-yellow-100 text-yellow-700 rounded-xl p-4 shadow">
           <h3 class="font-bold text-lg">🥇 Top 3 Players (KDA)</h3>
-          ${top3.map((p, i) => `<p>${i + 1}. ${p.player} — ${p.kda.toFixed(2)}</p>`).join("") || "<p>N/A</p>"}
+          ${top3.map((p, i) => `<p>${i + 1}. ${p.player} — ${p.kda?.toFixed(2) || "N/A"}</p>`).join("") || "<p>N/A</p>"}
         </div>
       </div>
     `;
 
-    // Tabs and sections (unchanged)
+    // Render Tabs + Sections (same)
     tabs.innerHTML = sections.map((s, i) => `
-      <button id="tab-${i}" data-idx="${i}" class="tab-btn px-4 py-2 rounded-md bg-gray-100 text-gray-700 font-medium">${s.name}</button>`
+      <button id="tab-${i}" data-idx="${i}" 
+        class="tab-btn px-4 py-2 rounded-md bg-gray-100 text-gray-700 font-medium">${s.name}</button>`
     ).join("");
 
     container.innerHTML = sectionData.map((sec, i) => `
@@ -160,9 +168,6 @@ async function loadGoogleSheetData() {
                 <div class="bg-orange-400 text-white font-semibold px-3 py-2 uppercase tracking-wide">${g.title}</div>
                 <div class="overflow-x-auto">
                   <table class="min-w-full text-sm border-collapse">
-                    <thead class="bg-emerald-100 text-gray-900 font-semibold">
-                      <tr>${g.header.map(h => `<th class="px-3 py-2 border-b border-gray-300 text-left">${clean(h)}</th>`).join("")}</tr>
-                    </thead>
                     <tbody>
                       ${g.rows.map((r, i) => `
                         <tr class="${i % 2 === 0 ? "bg-white" : "bg-gray-50"} hover:bg-orange-50 transition">
@@ -201,5 +206,6 @@ async function loadGoogleSheetData() {
 
 loadGoogleSheetData();
 </script>
+
 </body>
 </html>
