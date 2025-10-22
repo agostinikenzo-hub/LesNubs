@@ -7,16 +7,11 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body { overflow-x: hidden; }
-    .active-tab {
-      background-color: rgb(249 115 22); /* Tailwind orange-500 */
-      color: white;
-    }
-    .tab-btn {
-      transition: all 0.2s ease;
-    }
-    .tab-btn:hover {
-      background-color: rgb(251 146 60); /* orange-400 */
-    }
+    .active-tab { background-color: rgb(249 115 22); color: white; }
+    .tab-btn { transition: all 0.2s ease; }
+    .tab-btn:hover { background-color: rgb(251 146 60); color: white; }
+    .card { transition: all 0.3s ease; }
+    .card:hover { transform: translateY(-3px); box-shadow: 0 6px 12px rgba(0,0,0,0.1); }
   </style>
 </head>
 
@@ -29,6 +24,7 @@
   <main class="w-full max-w-6xl mx-auto">
     <div id="sheet-container" class="bg-white shadow rounded-lg p-4">
       <div id="status" class="text-sm text-gray-600 mb-4">Loading data...</div>
+      <div id="summary" class="mb-6"></div>
       <div id="tabs" class="flex flex-wrap justify-center gap-2 mb-6"></div>
       <div id="sheet-data" class="space-y-8"></div>
     </div>
@@ -45,6 +41,7 @@ async function loadGoogleSheetData() {
     "https://docs.google.com/spreadsheets/d/15d-e7-S8A5p_uhAcHMaU2dCZc-csmZ7GJK9sd0iay8U/gviz/tq?tqx=out:csv";
   const container = document.getElementById("sheet-data");
   const tabs = document.getElementById("tabs");
+  const summary = document.getElementById("summary");
   const status = document.getElementById("status");
 
   try {
@@ -54,7 +51,7 @@ async function loadGoogleSheetData() {
     const rows = parsed.data.filter(r => r.some(c => c.trim() !== ""));
     const clean = v => String(v || "").replace(/^"|"$/g, "").replace(/""/g, '"').trim();
 
-    // --- Identify each section (Season / Splits) ---
+    // Identify sections (Splits)
     const firstRow = rows[0];
     const splitIndices = [];
     firstRow.forEach((cell, i) => {
@@ -68,7 +65,7 @@ async function loadGoogleSheetData() {
       end: splitIndices[idx + 1] || firstRow.length
     }));
 
-    // --- Parse section content ---
+    // Parse each section
     const sectionData = sections.map(sec => {
       const block = rows.map(r => r.slice(sec.start, sec.end));
       const groups = [];
@@ -78,40 +75,26 @@ async function loadGoogleSheetData() {
         const label = clean(row[0]);
         const isEmpty = row.every(c => !clean(c));
         const isHeader = /Player|Kills|Avg|MVP|Assist|Death|KDA|Games/i.test(label);
-
-        if (isEmpty) {
-          if (current) groups.push(current);
-          current = null;
-          continue;
-        }
-        if (isHeader) {
-          if (current) groups.push(current);
-          current = { title: label, header: row, rows: [] };
-        } else if (current) {
-          current.rows.push(row);
-        }
+        if (isEmpty) { if (current) groups.push(current); current = null; continue; }
+        if (isHeader) { if (current) groups.push(current); current = { title: label, header: row, rows: [] }; }
+        else if (current) current.rows.push(row);
       }
       if (current) groups.push(current);
       return { ...sec, groups };
     });
 
-    // ✅ Find the last split with actual player rows
-    const lastSplit = [...sectionData].reverse().find(sec => {
-      return sec.groups.some(g => g.rows.some(r => /JANSEN|SWEENEY|BENZ|OTA|ACHTEN|HH/i.test(r.join(" "))));
-    });
+    // Find the last split with real player rows
+    const lastSplit = [...sectionData].reverse().find(sec => 
+      sec.groups.some(g => g.rows.some(r => /JANSEN|SWEENEY|BENZ|OTA|ACHTEN|HH/i.test(r.join(" "))))
+    );
 
-    console.log("Detected latest split:", lastSplit?.name);
-
-    // ✅ Extract player data
     let playerStats = [];
     if (lastSplit) {
       for (const g of lastSplit.groups) {
         const playerCol = g.header.findIndex(h => /Player/i.test(h));
         const kdaCol = g.header.findIndex(h => /KDA KING|KDA/i.test(h));
         const opggCol = g.header.findIndex(h => /OP\.GG/i.test(h));
-
         if (playerCol >= 0 && kdaCol >= 0) {
-          console.log(`Parsing group: ${g.title} — Player col ${playerCol}, KDA col ${kdaCol}, OP.GG col ${opggCol}`);
           for (const r of g.rows) {
             const player = clean(r[playerCol]);
             if (!player || /team avg/i.test(player)) continue;
@@ -123,85 +106,71 @@ async function loadGoogleSheetData() {
       }
     }
 
-    console.log("Player stats extracted:", playerStats);
-
-    // ✅ Compute top stats
+    // Compute top stats
     const topKDA = playerStats.reduce((a, b) => (b.kda > a.kda ? b : a), { kda: -Infinity });
     const topOPGG = playerStats.reduce((a, b) => (b.opgg > a.opgg ? b : a), { opgg: -Infinity });
-    const avgKDA = playerStats.length
-      ? (playerStats.reduce((s, p) => s + p.kda, 0) / playerStats.length).toFixed(2)
-      : "N/A";
+    const avgKDA = playerStats.length ? (playerStats.reduce((s, p) => s + p.kda, 0) / playerStats.length).toFixed(2) : "N/A";
+    const top3 = [...playerStats].sort((a, b) => b.kda - a.kda).slice(0, 3);
 
-    // ✅ Render summary cards
-    const summaryHTML = `
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 text-center">
-        <div class="bg-orange-100 text-orange-700 rounded-xl p-4 shadow">
+    // Render summary cards
+    summary.innerHTML = `
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4 text-center mb-6">
+        <div class="card bg-orange-100 text-orange-700 rounded-xl p-4 shadow">
           <h3 class="font-bold text-lg">🏆 KDA KING</h3>
           <p>${topKDA.player || "N/A"} — ${isFinite(topKDA.kda) ? topKDA.kda.toFixed(2) : "N/A"}</p>
         </div>
-        <div class="bg-green-100 text-green-700 rounded-xl p-4 shadow">
+        <div class="card bg-green-100 text-green-700 rounded-xl p-4 shadow">
           <h3 class="font-bold text-lg">💥 Highest OP.GG</h3>
-          <p>${topOPGG.player || "N/A"} — ${isFinite(topOPGG.opgg) ? topOPGG.opgg.toFixed(1) : "N/A"}</p>
+          <p>${topOPGG.player || "N/A"} — ${isFinite(topOPGG.opgg) ? topOPGG.opgg.toFixed(2) : "N/A"}</p>
         </div>
-        <div class="bg-indigo-100 text-indigo-700 rounded-xl p-4 shadow">
+        <div class="card bg-indigo-100 text-indigo-700 rounded-xl p-4 shadow">
           <h3 class="font-bold text-lg">📊 Team Avg KDA</h3>
           <p>${avgKDA}</p>
         </div>
+        <div class="card bg-yellow-100 text-yellow-700 rounded-xl p-4 shadow">
+          <h3 class="font-bold text-lg">🥇 Top 3 Players (KDA)</h3>
+          ${top3.map((p, i) => `<p>${i + 1}. ${p.player} — ${p.kda.toFixed(2)}</p>`).join("") || "<p>N/A</p>"}
+        </div>
       </div>
     `;
-    tabs.insertAdjacentHTML("beforebegin", summaryHTML);
 
-    // --- Tabs rendering (unchanged) ---
+    // Render Tabs
     tabs.innerHTML = sections
       .map((s, i) => `
         <button id="tab-${i}" data-idx="${i}" 
           class="tab-btn px-4 py-2 rounded-md bg-gray-100 text-gray-700 font-medium">
           ${s.name}
-        </button>`)
-      .join("");
+        </button>`).join("");
 
-    // --- Section rendering (unchanged) ---
-    container.innerHTML = sectionData
-      .map(
-        (sec, i) => `
-        <div id="section-${i}" class="section hidden">
-          <div class="bg-white rounded-2xl shadow-xl border border-gray-200 p-6">
-            <h2 class="text-2xl font-bold text-orange-600 mb-4 text-center">${sec.name}</h2>
-            <div class="space-y-6">
-              ${sec.groups
-                .map(
-                  g => `
-                  <div class="border border-gray-300 rounded-lg overflow-x-auto">
-                    <div class="bg-orange-400 text-white font-semibold px-3 py-1 uppercase">${g.title}</div>
-                    <table class="min-w-full text-sm border-collapse">
-                      <thead class="bg-emerald-100 text-gray-900 font-semibold">
-                        <tr>${g.header
-                          .map(h => `<th class="px-3 py-1 border-b border-gray-300">${clean(h)}</th>`)
-                          .join("")}</tr>
-                      </thead>
-                      <tbody>
-                        ${g.rows
-                          .map(
-                            (r, i) => `
-                              <tr class="${i % 2 === 0 ? "bg-white" : "bg-gray-50"}">
-                                ${r
-                                  .map(c => `<td class="px-3 py-1 border-b border-gray-200">${clean(c)}</td>`)
-                                  .join("")}
-                              </tr>`
-                          )
-                          .join("")}
-                      </tbody>
-                    </table>
-                  </div>`
-                )
-                .join("")}
-            </div>
+    // Render each section (cleaned up)
+    container.innerHTML = sectionData.map((sec, i) => `
+      <div id="section-${i}" class="section hidden">
+        <div class="bg-white rounded-2xl shadow-xl border border-gray-200 p-6">
+          <h2 class="text-2xl font-bold text-orange-600 mb-4 text-center">${sec.name}</h2>
+          <div class="space-y-8">
+            ${sec.groups.map(g => `
+              <div class="border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                <div class="bg-orange-400 text-white font-semibold px-3 py-2 uppercase tracking-wide">${g.title}</div>
+                <div class="overflow-x-auto">
+                  <table class="min-w-full text-sm border-collapse">
+                    <thead class="bg-emerald-100 text-gray-900 font-semibold">
+                      <tr>${g.header.map(h => `<th class="px-3 py-2 border-b border-gray-300 text-left">${clean(h)}</th>`).join("")}</tr>
+                    </thead>
+                    <tbody>
+                      ${g.rows.map((r, i) => `
+                        <tr class="${i % 2 === 0 ? "bg-white" : "bg-gray-50"} hover:bg-orange-50 transition">
+                          ${r.map(c => `<td class="px-3 py-2 border-b border-gray-200">${clean(c)}</td>`).join("")}
+                        </tr>`).join("")}
+                    </tbody>
+                  </table>
+                </div>
+              </div>`).join("")}
           </div>
-        </div>`
-      )
-      .join("");
+        </div>
+      </div>
+    `).join("");
 
-    // --- Tab switching logic ---
+    // Tab switching
     const allTabs = document.querySelectorAll(".tab-btn");
     const allSections = document.querySelectorAll(".section");
     allTabs.forEach(tab => {
@@ -214,7 +183,6 @@ async function loadGoogleSheetData() {
       });
     });
 
-    // Default show first tab
     document.getElementById("tab-0").classList.add("active-tab");
     document.getElementById("section-0").classList.remove("hidden");
     status.textContent = "Loaded successfully ✔";
